@@ -3,7 +3,7 @@
 **Institución:** Universidad Tecnológica de Pereira (UTP) — Semillero Kilby  
 **Investigador / Desarrollador:** Daniel Felipe Duque Lizarralde  
 **Repositorio GitHub:** [dfelipeduquel/Sigatoka_C](https://github.com/dfelipeduquel/Sigatoka_C)  
-**Ruta Local:** `C:\Users\danie\Developer\Estacion_Sigatoka`
+**Target:** `esp32dev` (ESP32 DevKit v1 — PlatformIO / Arduino C++17)
 
 ---
 
@@ -57,34 +57,31 @@ Para garantizar robustez en campo, bajo consumo energético (batería/panel sola
 ## 4. Estructura Organizada del Proyecto
 
 ```text
-C:\Users\danie\Developer\Estacion_Sigatoka/
-├── .gitignore                      # Reglas de exclusión para PlatformIO, cachés y secretos
+Sigatoka_C/
+├── .gitignore                      # Reglas de exclusión (PlatformIO, secretos y respaldo legacy local)
+├── LICENSE                         # Licencia MIT
+├── README.md                       # Documentación principal del repositorio
 ├── platformio.ini                  # Configuración única para ESP32 DevKit v1 (esp32dev) en C++17
-├── Sigatoka.code-workspace         # Espacio de trabajo multi-carpeta de VS Code
+├── Sigatoka.code-workspace         # Espacio de trabajo portátil de VS Code
 ├── docs/
-│   ├── SEGUIMIENTO_MIGRACION_SIGATOKA.md      # Este documento vivo de seguimiento
+│   ├── SEGUIMIENTO_MIGRACION_SIGATOKA.md      # Bitácora viva de migración
 │   ├── INFORME_CAMBIOS_Y_MEJORAS_FASE1.md     # Informe técnico de cambios y mejoras
-│   └── INFORME_TRADUCCION_SIGATOKA_UTP.md     # Informe formal de traducción para anexar al Semillero Kilby
-├── legacy/
-│   └── micropython/
-│       ├── ads1x15.py, boot.py, ds1307.py, Header_*.py, main.py, RTC.py, sdcard.py
-│       ├── cam/                    # Firmware legacy para ESP32-CAM
-│       └── wifi_servidor_mods/     # Modificaciones históricas y simulador HTML
+│   └── INFORME_TRADUCCION_SIGATOKA_UTP.md     # Informe formal de traducción para el Semillero Kilby
 ├── include/
 │   ├── sigatok_config.h            # Constantes de hardware, calibración, feature flags y pines GPIO
 │   └── sigatok_types.h             # Estructuras de datos (RegistroCompletoEstacion, DatosFoliares)
 ├── lib/
 │   ├── SignalProcessing/           # Filtro EMA para acondicionamiento de señal
 │   ├── WeatherSensors/             # Drivers pluviómetro, anemómetro y veleta ADS1115
-│   ├── LeafWetness/                # Sensor humectación foliar y modelo epidemiológico
+│   ├── LeafWetness/                # Módulo base dormido (deshabilitado: SIGATOK_ENABLE_LEAF_WETNESS=0)
 │   ├── Microclimate/               # Driver AM2305B / DHT22 no bloqueante
 │   ├── TimeManager/                # Gestor I2C DS1307 TinyRTC con fallback interno
-│   ├── StorageManager/             # Almacenamiento MicroSD SPI + LittleFS flash buffer
+│   ├── StorageManager/             # Almacenamiento MicroSD SPI (VSPI) + LittleFS flash buffer
 │   ├── ServiceMode/                # AP WiFi y portal web de descarga de datos
-│   ├── Telemetry/                  # Notificaciones Telegram Bot seguras
-│   └── CamInterface/               # Protocolo TCP y disparo de cámara foliar
+│   ├── Telemetry/                  # Módulo dormido Telegram (deshabilitado: SIGATOK_ENABLE_TELEGRAM=0)
+│   └── CamInterface/               # Módulo dormido ESP32-CAM (deshabilitado: SIGATOK_ENABLE_CAM=0)
 └── src/
-    └── main.cpp                    # Orquestador del ciclo de campo y Deep Sleep
+    └── main.cpp                    # Orquestador del ciclo de campo, Watchdog y Deep Sleep
 ```
 
 ---

@@ -1,19 +1,14 @@
 {
 	"folders": [
 		{
-			"name": "🍌 Sigatoka - Firmware C++ (PlatformIO)",
-			"path": "C:/Users/danie/Developer/Estacion_Sigatoka"
-		},
-		{
-			"name": "📂 Kilby - Documentación Sigatoka",
-			"path": "C:/Users/danie/Documents/4. UTP GENERAL/CONTENIDO 5TO SEMESTRE/KILBY - Semillero/SIGATOK Estación Agrometeorológica"
+			"name": "SIGATOK - Firmware C++17 (PlatformIO)",
+			"path": "."
 		}
 	],
 	"settings": {
 		"files.associations": {
 			"*.h": "cpp",
-			"*.cpp": "cpp",
-			"*.ino": "cpp"
+			"*.cpp": "cpp"
 		},
 		"editor.formatOnSave": true,
 		"C_Cpp.default.cppStandard": "c++17",
