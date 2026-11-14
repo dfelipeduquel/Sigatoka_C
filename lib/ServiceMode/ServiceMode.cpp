@@ -7,6 +7,7 @@
 
 #include "ServiceMode.h"
 #include <esp_sleep.h>
+#include <esp_task_wdt.h>
 #include <driver/rtc_io.h>
 #include <vector>
 
@@ -222,11 +223,13 @@ void ServiceMode::ejecutarServidor() {
 
     // Esperar liberación inicial del botón + antirrebote de entrada
     while (digitalRead(_pinBoton) == LOW) {
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     vTaskDelay(pdMS_TO_TICKS(200));
 
     while (_servidorActivo) {
+        esp_task_wdt_reset();
         _servidor.handleClient();
 
         // 1. Timeout por tiempo máximo de servicio (10 minutos)
@@ -241,6 +244,7 @@ void ServiceMode::ejecutarServidor() {
         if (digitalRead(_pinBoton) == LOW) {
             uint32_t inicioPulsacion = millis();
             while (digitalRead(_pinBoton) == LOW) {
+                esp_task_wdt_reset();
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             uint32_t duracion = millis() - inicioPulsacion;
@@ -255,12 +259,17 @@ void ServiceMode::ejecutarServidor() {
         vTaskDelay(pdMS_TO_TICKS(10)); // Cede tiempo al watchdog y FreeRTOS
     }
 
+    if (_storage != nullptr && _timeMgr != nullptr) {
+        _storage->escribirLog(_timeMgr->obtenerCadenaCompleta(), "Sleep por servidor");
+    }
+
     _servidor.stop();
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
 
     // Esperar liberación total y estabilización del pin antes de rearmar EXT0/ISR
     while (digitalRead(_pinBoton) == LOW) {
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     vTaskDelay(pdMS_TO_TICKS(100));

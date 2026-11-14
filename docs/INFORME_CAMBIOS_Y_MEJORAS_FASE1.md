@@ -62,8 +62,8 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 ### 3.3. Veleta de Dirección (`lib/WeatherSensors/WindVane.*` + `lib/SignalProcessing/EmaFilter.*`)
 - **Qué cambió respecto al legado y al andamio inicial:**
   - Se conservaron intactos los **8 rangos de voltaje** calibrados en `Header_sensoresEstacion.py` (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W/N`, `W` + `"Fuera de rango"`).
-  - Se integró el filtro digital **`EmaFilter`** ($\alpha = 0.35$, ecuación $y[n] = \alpha x[n] + (1 - \alpha)y[n-1]$) mediante `muestrear()` cada $2\,\text{s}$ dentro de la ventana de $60\,\text{s}$ (más ráfaga de respaldo de 5 muestras si no hubo muestreos previos).
-- **Por qué mejora la estación:** En MicroPython se tomaba **una única lectura instantánea** (`ads1115.read()`) al final del minuto, sensible a picos transitorios o rebotes mecánicos de la veleta en campo. El muestreo periódico filtrado por EMA estabiliza la lectura analógica manteniendo exactamente las mismas fronteras de tensión.
+  - En lugar de arrastrar una EMA continua durante 60 s (que ante cambios bruscos de viento cruzaba tensiones intermedias falsas), `WindVane::obtenerDireccion()` reinicia `EmaFilter` ($\alpha = 0.35$) al cierre de la ventana de medición y toma una **ráfaga rápida no bloqueante de 8 muestras (~80 ms)** del ADS1115.
+- **Por qué mejora la estación:** Suprime picos eléctricos transitorios del ADC conservando exactamente el mismo instante temporal de muestreo que MicroPython (`EstacionObj.Measure_All()`) y evitando direcciones fantasma intermedias.
 
 ### 3.4. Microclima AM2305B / DHT22 (`lib/Microclimate/MicroclimateSensor.*`)
 - **Qué cambió respecto al legado:**
@@ -96,18 +96,18 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 
 ### 3.8. Orquestación Principal (`src/main.cpp`)
 - **Qué cambió respecto al legado:**
-  - Máquina de flujo determinista sin `delay()` bloqueante (`vTaskDelay` + `millis()`).
-  - Mantiene todos los `checkpoint()` equivalentes de `main.py` (inicio, antes/durante/después de la ventana de $60\,\text{s}$, durante reintento AM2305B y antes/después del guardado) para entrar a Modo Servicio de inmediato al pulsar el botón físico.
-  - Conserva los mensajes de bitácora del sistema (`"Placa encendida"`, `"Desperto por boton"`, `"Datos adquiridos"`, `"Registro guardado"`, `"Entrando en deep sleep"`).
-  - Configura wakeup dual antes de dormir: **Timer ($30\,\text{min}$)** + **`EXT0` en `GPIO 32` nivel bajo (`0`)**, apagando `LED_ESTADO` (`GPIO 2`) y desmontando la SD.
+  - Máquina de flujo determinista sin `delay()` bloqueante (`vTaskDelay` + `millis()`), protegida por **Watchdog de tarea `esp_task_wdt` ($30\,\text{s}$)** y **timeout I2C ($50\,\text{ms}$)**.
+  - Registra reinicios anómalos (`Brownout`, `Task Watchdog`, `Panic`) mediante `esp_reset_reason()` antes de iniciar el ciclo.
+  - Mantiene todos los `checkpoint()` equivalentes de `main.py` y conserva mensajes de bitácora y consola Serial compatibles (`"Placa encendida"`, `"Desperto por boton"`, `"Sleep por servidor"`, `"Datos adquiridos"`, `"Error leyendo AM2305B"`, `"Registro guardado"`, `"Entrando en deep sleep"`).
+  - Diferencia correctamente los tiempos de Deep Sleep: **`30 min`** en operación meteorológica normal y **`1 min`** al salir de Modo Servicio (paridad 1:1 con `sleep_min=1` de Python), con wakeup `Timer + EXT0 GPIO 32`.
 
 ---
 
 ## 4. Verificación de Compilación y Trazabilidad Git
 
-- **Comando ejecutado:** `pio run -e esp32dev` (PlatformIO Core, plataforma `espressif32 @ 6.12.0`, framework Arduino, compilador `-std=gnu++17`).
-- **Resultado:** `SUCCESS` en `24.67 s`.
+- **Comando ejecutado:** `pio run -e esp32dev` (PlatformIO Core, plataforma `espressif32 @ 6.12.0`, framework Arduino, compilador `-std=gnu++17`, sin la dependencia sin uso `ArduinoJson`).
+- **Resultado:** `SUCCESS` en `64.59 s`.
   - **RAM utilizada:** `46,928 bytes` (`14.3%` de `327,680 bytes`).
-  - **Flash utilizada:** `922,501 bytes` (`70.4%` de `1,310,720 bytes`).
+  - **Flash utilizada:** `923,701 bytes` (`70.5%` de `1,310,720 bytes`).
 - **Historial limpio en GitHub (`origin/main`):**
   - El código MicroPython `legacy/` fue purgado completamente del historial remoto (conservado únicamente en copia local ignorada por `.gitignore`), dejando el repositorio `dfelipeduquel/Sigatoka_C` 100% en C++.

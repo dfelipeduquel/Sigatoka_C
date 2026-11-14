@@ -78,8 +78,11 @@ namespace SigatokaConfig {
     // =========================================================================
     // 3. ENERGÍA Y GESTIÓN DE CICLOS (DEEP SLEEP)
     // =========================================================================
-    constexpr uint64_t TIEMPO_DEEP_SLEEP_MIN     = 30;     // SLEEP_MIN = 30 en main.py legacy
-    constexpr uint64_t TIEMPO_DEEP_SLEEP_US      = TIEMPO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL;
+    constexpr uint64_t TIEMPO_DEEP_SLEEP_MIN          = 30; // SLEEP_MIN = 30 en main.py legacy
+    constexpr uint64_t TIEMPO_DEEP_SLEEP_SERVICIO_MIN = 1;  // sleep_min = 1 al salir de ModoServicio
+    constexpr uint64_t TIEMPO_DEEP_SLEEP_US           = TIEMPO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL;
+    constexpr uint32_t WATCHDOG_TIMEOUT_SEG           = 30; // Protección anti-bloqueo I2C/SPI/WiFi
+    constexpr uint32_t I2C_TIMEOUT_MS                 = 50; // Timeout bus I2C en caso de falla física
 
     // Modo Servicio (Access Point Web - Header_ModoServicio.py)
     constexpr const char* AP_SSID_SERVICIO       = "ESTACION_METEO_DATOS";

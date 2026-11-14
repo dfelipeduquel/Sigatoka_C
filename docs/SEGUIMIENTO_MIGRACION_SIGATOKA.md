@@ -27,7 +27,7 @@ Para garantizar robustez en campo, bajo consumo energético (batería/panel sola
 | **Bus I2C Principal** | I2C (400 kHz) | `SDA: 27` / `SCL: 26` | ADS1115 (0x48) + TinyRTC DS1307 (0x68) | Pull-ups externos en PCB Kilby |
 | **Pluviómetro de Balancín** | Pulso / ISR (`esp_timer`) | `GPIO 23` | $0.30\,\text{mm/pulso}$ | Debounce ISR sin bloqueo ($\ge 150\,\text{ms}$) |
 | **Anemómetro de Cazoletas** | Pulso / ISR (`esp_timer`) | `GPIO 22` | $v = f \times 0.188\,\text{m/s}$ | Debounce ($\ge 60\,\text{ms}$) sobre duración real de ventana |
-| **Veleta de Dirección** | Analógico vía ADS1115 | `AIN0 (ADS1115)` | $0.0\,\text{V} - 4.1\,\text{V}$ (8 rumbos cardinales) | **Filtro EMA ($\alpha=0.35$)** + muestreo cada $2\,\text{s}$ en ventana |
+| **Veleta de Dirección** | Analógico vía ADS1115 | `AIN0 (ADS1115)` | $0.0\,\text{V} - 4.1\,\text{V}$ (8 rumbos cardinales) | Ráfaga EMA ($\alpha=0.35$, 8 muestras / $\sim 80\,\text{ms}$) al cierre de ventana |
 | **Microclima (AM2305B / DHT22)** | Unibus Digital | `GPIO 16` | $-40\text{ a }80^\circ\text{C}$, $0\text{ a }100\%\,\text{RH}$ | 1 reintento no bloqueante ($2100\,\text{ms}$) ante fallo CRC |
 | **Almacenamiento MicroSD** | SPI Hardware (`VSPI`) | `SCK: 21, MOSI: 19, MISO: 18, CS: 17` | FAT32 (`/MUNDONUEVO.csv`, `/logs.txt`) | Streaming sin `String` masivos; copia en bloques $512\,\text{B}$ |
 | **Memoria Flash Interna** | LittleFS | Flash embebida | `/buffer_pendiente.csv`, `/logs_flash.txt` | Respaldo automático ante falla SD + volcado seguro |
@@ -63,7 +63,8 @@ C:\Users\danie\Developer\Estacion_Sigatoka/
 ├── Sigatoka.code-workspace         # Espacio de trabajo multi-carpeta de VS Code
 ├── docs/
 │   ├── SEGUIMIENTO_MIGRACION_SIGATOKA.md      # Este documento vivo de seguimiento
-│   └── INFORME_CAMBIOS_Y_MEJORAS_FASE1.md     # Informe técnico detallado Legacy -> C++ Fase 1
+│   ├── INFORME_CAMBIOS_Y_MEJORAS_FASE1.md     # Informe técnico de cambios y mejoras
+│   └── INFORME_TRADUCCION_SIGATOKA_UTP.md     # Informe formal de traducción para anexar al Semillero Kilby
 ├── legacy/
 │   └── micropython/
 │       ├── ads1x15.py, boot.py, ds1307.py, Header_*.py, main.py, RTC.py, sdcard.py
@@ -89,6 +90,18 @@ C:\Users\danie\Developer\Estacion_Sigatoka/
 ---
 
 ## 5. Trazabilidad de Cambios y Mejoras Técnicas
+
+### Versión 1.2.0-cpp — Refinamiento Final de Paridad 1:1 y Endurecimiento (14/Nov/2026)
+- **Resolución de Discordancias con Legado:**
+  - `ServiceMode` duerme **`1 min`** al salir del servidor web/botón (`TIEMPO_DEEP_SLEEP_SERVICIO_MIN = 1`), conservando **`30 min`** en ciclos normales, y registra `"Sleep por servidor"` exactamente como `Header_ModoServicio.py`.
+  - `WindVane::obtenerDireccion()` ejecuta una ráfaga rápida no bloqueante de 8 muestras (`~80 ms`) filtradas por EMA ($\alpha=0.35$) al cierre de ventana, eliminando ruido eléctrico sin generar rumbos intermedios fantasma entre minutos.
+  - Trazas Serial alineadas con los hitos históricos (`GPIO32 = ...`, `Inicializando microSD...`, `MicroSD detectada correctamente.`, `Pulsos/min`, `Frecuencia`, `Velocidad`, `Registro guardado en microSD.`, `MicroSD desmontada con exito.`, `Wakeup reconfigurado antes de dormir`).
+- **Confiabilidad Embebida y Limpieza:**
+  - Watchdog de tarea `esp_task_wdt` ($30\,\text{s}$), timeout de bus I2C ($50\,\text{ms}$) y registro en `logs.txt` ante reinicios anómalos (`Brownout` / `WDT` / `Panic`).
+  - Eliminación de dependencia sin uso `ArduinoJson` en `platformio.ini`.
+  - Informe formal completo para documentación del Semillero creado en `docs/INFORME_TRADUCCION_SIGATOKA_UTP.md`.
+- **Validación Final de Compilación (`pio run -e esp32dev`):**
+  - `esp32dev`: `SUCCESS` en `64.59 s` — RAM: `46,928 bytes (14.3% / 327,680 B)`, Flash: `923,701 bytes (70.5% / 1,310,720 B)`.
 
 ### Versión 1.1.1-cpp — Corrección de Hardware Único (`esp32dev`) (14/Nov/2026)
 - **Eliminación Completa de ESP32-S3:**

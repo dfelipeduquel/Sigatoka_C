@@ -11,6 +11,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <driver/rtc_io.h>
 
 #include "sigatok_config.h"
@@ -62,8 +64,9 @@ RTC_DATA_ATTR static uint32_t contadorCiclos = 0;
 // Prototipos de funciones
 void inicializarHardware();
 bool verificarPuntosDeControl();
-void ejecutarCicloMedicion();
-void entrarEnDeepSleep();
+bool ejecutarCicloMedicion();
+void entrarEnDeepSleep(uint64_t minutosSleep = SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN);
+const char* describirCausaReset(esp_reset_reason_t razon);
 
 void setup() {
     Serial.begin(115200);
@@ -73,9 +76,13 @@ void setup() {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+    // Watchdog de tarea (30 s): evita bloqueos indefinidos en I2C/SPI/WiFi sin usar delay()
+    esp_task_wdt_init(SigatokaConfig::WATCHDOG_TIMEOUT_SEG, true);
+    esp_task_wdt_add(nullptr);
+
     Serial.println("\n========================================================");
-    Serial.println("🌿 SIGATOK - Estación Agrometeorológica (C++17 Fase 1)");
-    Serial.println("🏛️ Semillero Kilby - Universidad Tecnológica de Pereira");
+    Serial.println("SIGATOK - Estacion Agrometeorologica (C++17 - ESP32)");
+    Serial.println("Semillero Kilby - Universidad Tecnologica de Pereira");
     Serial.println("========================================================");
 
     pinMode(SigatokaConfig::PIN_LED_ESTADO, OUTPUT);
@@ -83,28 +90,39 @@ void setup() {
 
     inicializarHardware();
 
+    esp_reset_reason_t razonReset = esp_reset_reason();
+    if (razonReset == ESP_RST_BROWNOUT || razonReset == ESP_RST_TASK_WDT ||
+        razonReset == ESP_RST_WDT || razonReset == ESP_RST_PANIC) {
+        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(),
+                               String("Reinicio anomalo: ") + describirCausaReset(razonReset));
+    }
+
     storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Placa encendida");
+    Serial.printf("GPIO32 = %d\n", digitalRead(SigatokaConfig::PIN_BOTON_SERVICIO));
 
     // 1. Detección de despertar por botón físico (EXT0 en GPIO 32)
     if (serviceMode.despertoPorBoton()) {
-        Serial.println("⚡ Modo servicio solicitado por EXT0 (GPIO 32).");
+        Serial.println("Modo servicio solicitado (EXT0 GPIO 32)");
         storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Desperto por boton");
         serviceMode.ejecutarServidor();
-        entrarEnDeepSleep();
+        entrarEnDeepSleep(SigatokaConfig::TIEMPO_DEEP_SLEEP_SERVICIO_MIN);
         return;
     }
 
     // 2. Checkpoint inicial antes de comenzar mediciones
     if (verificarPuntosDeControl()) {
-        entrarEnDeepSleep();
+        entrarEnDeepSleep(SigatokaConfig::TIEMPO_DEEP_SLEEP_SERVICIO_MIN);
         return;
     }
 
     // 3. Ejecutar ciclo de medición agrometeorológica (paridad 1:1 con main.py)
-    ejecutarCicloMedicion();
+    if (!ejecutarCicloMedicion()) {
+        entrarEnDeepSleep(SigatokaConfig::TIEMPO_DEEP_SLEEP_SERVICIO_MIN);
+        return;
+    }
 
     // 4. Desmontar interfaces y entrar en Deep Sleep (30 minutos)
-    entrarEnDeepSleep();
+    entrarEnDeepSleep(SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN);
 }
 
 void loop() {
@@ -112,32 +130,36 @@ void loop() {
 }
 
 void inicializarHardware() {
-    // Bus I2C a 400 kHz en pines legacy: SDA=27, SCL=26
+    // Bus I2C a 400 kHz en pines legacy: SDA=27, SCL=26 con timeout anti-bloqueo
     I2CBus.begin(SigatokaConfig::PIN_I2C_SDA, SigatokaConfig::PIN_I2C_SCL, SigatokaConfig::I2C_FREQUENCY_HZ);
+    I2CBus.setTimeOut(SigatokaConfig::I2C_TIMEOUT_MS);
 
     // ADS1115 (0x48) con ganancia +/- 4.096 V (igual a gain=1 en ads1x15.py legacy)
     ads1115.setGain(GAIN_ONE);
     if (!ads1115.begin(0x48, &I2CBus)) {
-        Serial.println("⚠️ ADS1115 no respondió en dirección 0x48.");
+        Serial.println("WARN: ADS1115 no respondio en direccion 0x48.");
     } else {
-        Serial.println("✅ ADS1115 16-bit ADC inicializado.");
+        Serial.println("ADS1115 16-bit ADC inicializado.");
+    }
+
+    // Almacenamiento híbrido: MicroSD (SPI VSPI) + LittleFS Flash interna
+    Serial.println("Inicializando microSD...");
+    if (storageMgr.begin()) {
+        if (storageMgr.sdDisponible()) {
+            Serial.println("MicroSD detectada correctamente.");
+        } else {
+            Serial.println("ERROR: No se detecto la microSD. Respaldo LittleFS activo.");
+        }
+    } else {
+        Serial.println("ERROR: Falla critica de almacenamiento.");
     }
 
     // TinyRTC DS1307 (0x68) con respaldo transparente al RTC interno del ESP32
     if (timeMgr.begin(&I2CBus)) {
-        Serial.printf("✅ TinyRTC sincronizado: %s\n", timeMgr.obtenerCadenaCompleta().c_str());
+        Serial.printf("TinyRTC sincronizado: %s\n", timeMgr.obtenerCadenaCompleta().c_str());
     } else {
-        Serial.println("⚠️ TinyRTC no detectado o sin hora válida. Usando RTC interno.");
+        Serial.println("TinyRTC fallo, uso RTC interno.");
         storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "TinyRTC fallo, uso RTC interno");
-    }
-
-    // Almacenamiento híbrido: MicroSD (SPI) + LittleFS Flash interna
-    if (storageMgr.begin()) {
-        Serial.printf("✅ Almacenamiento listo (SD: %s, LittleFS: %s)\n",
-                      storageMgr.sdDisponible() ? "OK" : "NO",
-                      storageMgr.littleFsDisponible() ? "OK" : "NO");
-    } else {
-        Serial.println("❌ ERROR: Falla crítica de almacenamiento.");
     }
 
     // Sensores y Modo Servicio
@@ -145,55 +167,63 @@ void inicializarHardware() {
     anemometer.begin();
     microclimate.begin();
     serviceMode.begin();
+    Serial.println("Wakeup GPIO32 configurado");
 
 #if SIGATOK_ENABLE_CAM
     camInterface.begin();
 #endif
+}
 
-    Serial.println("✅ Periféricos y sensores configurados según ancla de campo.");
+const char* describirCausaReset(esp_reset_reason_t razon) {
+    switch (razon) {
+        case ESP_RST_BROWNOUT: return "Brownout (caida de tension)";
+        case ESP_RST_TASK_WDT: return "Task Watchdog";
+        case ESP_RST_WDT:      return "Interrupt/RTC Watchdog";
+        case ESP_RST_PANIC:    return "Kernel Panic";
+        default:               return "Otro";
+    }
 }
 
 bool verificarPuntosDeControl() {
     if (serviceMode.solicitudServicioPendiente()) {
-        Serial.println("⚠️ Checkpoint: Interrupción de modo servicio solicitada (GPIO 32).");
+        Serial.println("Interrupcion solicitada (checkpoint GPIO 32).");
         serviceMode.ejecutarServidor();
         return true;
     }
     return false;
 }
 
-void ejecutarCicloMedicion() {
-    Serial.println("\n📊 Inicio de ciclo de medición (ventana de 60 s)...");
+bool ejecutarCicloMedicion() {
+    Serial.println("\nInicio de ciclo de medicion (60 s)");
 
-    windVane.reiniciarFiltro();
     rainGauge.iniciarVentana();
     anemometer.iniciarVentana();
 
     uint32_t inicioVentana = millis();
-    uint32_t ultimoMuestreoVeleta = 0;
 
-    // Ventana no bloqueante de 60 segundos con muestreo periódico EMA de la veleta y checkpoints
+    // Ventana no bloqueante de 60 segundos monitoreando checkpoints del botón y watchdog
     while ((millis() - inicioVentana) < SigatokaConfig::ANEMO_SAMPLE_WINDOW_MS) {
+        esp_task_wdt_reset();
         if (verificarPuntosDeControl()) {
-            // Al salir de modo servicio abortamos la ventana interrumpida para dormir ordenadamente
             rainGauge.finalizarYObtenerPrecipitacion();
             anemometer.finalizarYObtenerVelocidad(1.0f);
-            return;
+            return false;
         }
-
-        if ((millis() - ultimoMuestreoVeleta) >= 2000) {
-            ultimoMuestreoVeleta = millis();
-            windVane.muestrear();
-        }
-
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     float duracionRealSeg = static_cast<float>(millis() - inicioVentana) / 1000.0f;
 
-    // 1. Recolección de variables meteorológicas
+    // 1. Recolección de variables meteorológicas (misma secuencia que EstacionObj.Measure_All())
     float lluvia = rainGauge.finalizarYObtenerPrecipitacion();
+    uint32_t pulsosViento = anemometer.obtenerPulsosActuales();
     float vientoVel = anemometer.finalizarYObtenerVelocidad(duracionRealSeg);
+    float frecuenciaViento = (duracionRealSeg > 0.0f) ? (static_cast<float>(pulsosViento) / duracionRealSeg) : 0.0f;
+
+    Serial.printf("Pulsos/min: %u\n", pulsosViento);
+    Serial.printf("Frecuencia: %.4f Hz\n", frecuenciaViento);
+    Serial.printf("Velocidad: %.3f m/s\n", vientoVel);
+
     float voltajeVeleta = 0.0f;
     const char* vientoDir = windVane.obtenerDireccion(&voltajeVeleta);
 
@@ -204,19 +234,21 @@ void ejecutarCicloMedicion() {
     if (!microOk) {
         uint32_t tEspera = millis();
         while ((millis() - tEspera) < 2100) {
-            if (verificarPuntosDeControl()) return;
+            esp_task_wdt_reset();
+            if (verificarPuntosDeControl()) return false;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         microOk = microclimate.leer(&temp, &hum);
         if (!microOk) {
             temp = 0.0f;
             hum = 0.0f;
+            storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Error leyendo AM2305B");
         }
     }
 
     storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Datos adquiridos");
 
-    if (verificarPuntosDeControl()) return;
+    if (verificarPuntosDeControl()) return false;
 
     // 2. Estructuración del registro con marca temporal
     RegistroCompletoEstacion registro;
@@ -230,57 +262,51 @@ void ejecutarCicloMedicion() {
     registro.meteo.humedad_relativa_pct = hum;
     registro.meteo.valido               = microOk;
 
-#if SIGATOK_ENABLE_LEAF_WETNESS
-    uint32_t minutosCiclo = (contadorCiclos == 0) ? 1 : (SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN + 1);
-    DatosFoliares foliar = leafWetness.actualizar(minutosCiclo);
-    if (foliar.hoja_humectada) {
-        duracionHumectacionAcumuladaMin += minutosCiclo;
-    } else {
-        duracionHumectacionAcumuladaMin = 0;
-    }
-    foliar.duracion_humeda_min = duracionHumectacionAcumuladaMin;
-    registro.foliar = foliar;
-#endif
+    Serial.printf("Registro CSV: %s\n", registro.aFormatoCSV().c_str());
+    Serial.printf("Veleta V_EMA=%.3fV (%s) | AM2305B=%s\n",
+                  voltajeVeleta, vientoDir, microOk ? "OK" : "FALLO");
 
-    Serial.println("\n📈 Registro consolidado (CSV):");
-    Serial.println(registro.aFormatoCSV());
-    Serial.printf("   [Veleta V_EMA=%.3fV | AM2305B=%s]\n",
-                  voltajeVeleta, microOk ? "OK" : "FALLO");
+    if (verificarPuntosDeControl()) return false;
 
     // 3. Guardado en MicroSD (con failover transparente a LittleFS)
     if (storageMgr.guardarRegistro(registro)) {
-        Serial.println("💾 Registro guardado en almacenamiento.");
+        Serial.println("Registro guardado en microSD.");
         storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Registro guardado");
     } else {
-        Serial.println("❌ Error guardando registro en almacenamiento.");
+        Serial.println("Error guardando en microSD");
         storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Error guardando en microSD");
     }
 
     contadorCiclos++;
+    return true;
 }
 
-void entrarEnDeepSleep() {
-    Serial.println("\n💤 Cerrando interfaces y entrando en Deep Sleep...");
+void entrarEnDeepSleep(uint64_t minutosSleep) {
+    Serial.println("Cerrando interfaces y SD...");
     storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Entrando en deep sleep");
 
     // Desmontar MicroSD para proteger integridad del sistema FAT32
     storageMgr.desmontarSD();
-    Serial.println("MicroSD desmontada con éxito.");
+    Serial.println("MicroSD desmontada con exito.");
 
-    // Apagar LED de estado
-    digitalWrite(SigatokaConfig::PIN_LED_ESTADO, LOW);
+    // Desactivar watchdog antes de entrar en Deep Sleep
+    esp_task_wdt_delete(nullptr);
+    esp_task_wdt_deinit();
 
     // Configurar fuentes de despertar:
-    // 1. Temporizador periódico (30 minutos)
-    esp_sleep_enable_timer_wakeup(SigatokaConfig::TIEMPO_DEEP_SLEEP_US);
+    // 1. Temporizador periódico (30 min normal / 1 min al salir de Modo Servicio)
+    uint64_t tiempoUs = minutosSleep * 60ULL * 1000000ULL;
+    esp_sleep_enable_timer_wakeup(tiempoUs);
 
     // 2. Botón de servicio físico en GPIO 32 (nivel bajo / EXT0) con pull-up RTC activo en Deep Sleep
     rtc_gpio_pullup_en(SigatokaConfig::PIN_BOTON_SERVICIO);
     rtc_gpio_pulldown_dis(SigatokaConfig::PIN_BOTON_SERVICIO);
     esp_sleep_enable_ext0_wakeup(SigatokaConfig::PIN_BOTON_SERVICIO, 0);
 
-    Serial.printf("🌙 Durmiendo %llu minutos. Wakeup reconfigurado (Timer + EXT0 GPIO32).\n",
-                  SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN);
+    Serial.println("Wakeup reconfigurado antes de dormir");
+    digitalWrite(SigatokaConfig::PIN_LED_ESTADO, LOW);
+
+    Serial.printf("Entrando en Deep Sleep (%llu min)...\n", minutosSleep);
     Serial.flush();
 
     esp_deep_sleep_start();

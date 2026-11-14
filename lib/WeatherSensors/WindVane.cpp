@@ -52,11 +52,13 @@ const char* WindVane::obtenerDireccion(float* voltajeSalida) {
         return "Fuera de rango";
     }
 
-    // Si no se acumuló ninguna muestra durante la ventana, tomar ráfaga de 5 lecturas EMA
-    if (!_tieneMuestras) {
-        for (uint8_t i = 0; i < 5; i++) {
-            muestrear();
-            vTaskDelay(pdMS_TO_TICKS(5));
+    // Ráfaga rápida no bloqueante de 8 muestras (~80 ms) filtradas por EMA al cierre de ventana:
+    // suprime ruido eléctrico del ADC sin promediar rumbos distintos de 60 segundos atrás.
+    reiniciarFiltro();
+    for (uint8_t i = 0; i < 8; i++) {
+        muestrear();
+        if (i < 7) {
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 
