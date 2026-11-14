@@ -22,3 +22,6 @@ secrets.h
 Thumbs.db
 [Dd]esktop.ini
 .DS_Store
+
+# Respaldo local legacy MicroPython (solo referencia offline, excluido de GitHub)
+legacy/

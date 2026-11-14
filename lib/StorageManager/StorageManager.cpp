@@ -154,12 +154,21 @@ bool StorageManager::leerUltimosRegistros(size_t maxRegistros, String& cabeceraO
     cabeceraOut = String(CABECERA_CSV);
     cabeceraOut.trim();
 
-    File f = abrirLecturaCSV();
+    bool desdeSD = false;
+    File f;
+    if (_sdInicializada && SD.exists(SigatokaConfig::RUTA_CSV_SD)) {
+        f = SD.open(SigatokaConfig::RUTA_CSV_SD, FILE_READ);
+        desdeSD = static_cast<bool>(f);
+    } else if (_littleFsInicializado && LittleFS.exists(SigatokaConfig::RUTA_BUFFER_FLASH)) {
+        f = LittleFS.open(SigatokaConfig::RUTA_BUFFER_FLASH, FILE_READ);
+    }
+
     if (!f) {
         return false;
     }
 
-    if (f.available()) {
+    // Solo el CSV en SD contiene fila de encabezado; el buffer LittleFS almacena filas crudas
+    if (desdeSD && f.available()) {
         String primera = f.readStringUntil('\n');
         primera.trim();
         if (primera.length() > 0) {

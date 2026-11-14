@@ -10,7 +10,7 @@
 
 ## 1. Aclaración y Rectificación de Alcance Hardware (ESP32-S3 y Sensores)
 
-Durante el andamiaje inicial del repositorio (commit `f77a4f9`) y la primera entrega de Fase 1 (`bb0a95b`), se había incluido un entorno secundario `[env:esp32s3]` junto con directivas condicionales `#if defined(CONFIG_IDF_TARGET_ESP32S3)` en configuración y almacenamiento.  
+Durante el andamiaje inicial del repositorio y la primera entrega de Fase 1, se había incluido un entorno secundario `[env:esp32s3]` junto con directivas condicionales `#if defined(CONFIG_IDF_TARGET_ESP32S3)` en configuración y almacenamiento.  
 Tras la revisión de alcance:
 
 1. **Se eliminó completamente `[env:esp32s3]`** de `platformio.ini` y todas las macros/ramas de ESP32-S3 en `include/sigatok_config.h` y `lib/StorageManager/StorageManager.cpp`.
@@ -24,7 +24,7 @@ Tras la revisión de alcance:
 
 ## 2. Verificación 1:1 de Pinout y Constantes Físicas vs. Legado MicroPython
 
-Todos los pines y factores de calibración en `include/sigatok_config.h` se contrastaron directamente contra `legacy/micropython/main.py` y `legacy/micropython/Header_sensoresEstacion.py` (respaldados en el commit `f77a4f9`):
+Todos los pines y factores de calibración en `include/sigatok_config.h` se contrastaron directamente contra el código heredado `main.py` y `Header_sensoresEstacion.py` (conservados en respaldo local offline):
 
 | Subsistema | Pin / Parámetro en MicroPython Legacy | Implementación C++ (`sigatok_config.h`) | Verificación |
 | :--- | :--- | :--- | :--- |
@@ -45,7 +45,7 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 ## 3. Trazado Detallado de Cambios y Mejoras Módulo por Módulo
 
 ### 3.1. Configuración y Estructuras (`include/sigatok_config.h`, `include/sigatok_types.h`)
-- **Qué cambió respecto al legado y al andamio inicial (`f77a4f9`):**
+- **Qué cambió respecto al legado y al andamio inicial:**
   - Se amplió `DatosMeteorologicos::direccion_viento` de `char[8]` a **`char[18]`** (`"Fuera de rango"` ocupa 14 caracteres + `\0`; con `char[8]` se habría truncado silenciosamente).
   - En `RegistroCompletoEstacion::aFormatoCSV()`, cuando las banderas de fases futuras están en `0`, la trama emitida tiene **7 columnas exactas**: `Fecha,Hora,Lluvia,Velocidad,Dirección,Temperatura,Humedad` (`%s,%s,%.2f,%.3f,%s,%.2f,%.2f`).
   - Se fijaron rutas dedicadas para respaldo en Flash interna: `/buffer_pendiente.csv` y `/logs_flash.txt`.
@@ -79,7 +79,7 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 
 ### 3.6. Almacenamiento Híbrido MicroSD SPI + LittleFS (`lib/StorageManager/StorageManager.*`)
 - **Qué cambió respecto al legado y al andamio inicial (corrección crítica de hardware):**
-  - **Corrección crítica de bus SPI:** En el andamio inicial (`f77a4f9`), `_spiSD` se inicializaba con `FSPI`. En **ESP32 DevKit v1**, `FSPI` (`SPI1`) está asignado internamente a la memoria Flash del módulo; el periférico libre para pines definidos por software (`SCK 21`, `MOSI 19`, `MISO 18`, `CS 17`) es **`VSPI`**. Se corrigió a `SIGATOK_SD_SPI_HOST = VSPI`.
+  - **Corrección crítica de bus SPI:** En el andamio inicial, `_spiSD` se inicializaba con `FSPI`. En **ESP32 DevKit v1**, `FSPI` (`SPI1`) está asignado internamente a la memoria Flash del módulo; el periférico libre para pines definidos por software (`SCK 21`, `MOSI 19`, `MISO 18`, `CS 17`) es **`VSPI`**. Se corrigió a `SIGATOK_SD_SPI_HOST = VSPI`.
   - **Respaldo automático en Flash interna (LittleFS):** Si la tarjeta MicroSD falta o falla al escribir, los datos CSV y logs se almacenan en `/buffer_pendiente.csv` y `/logs_flash.txt` dentro de LittleFS. Al recuperar la SD en un ciclo posterior, `volcarBufferFlashASD()` y `volcarLogsFlashASD()` copian en **bloques de $512\,\text{B}$** (`copiarArchivoEnBloques`) y limpian el buffer de Flash.
   - **Streaming y vista previa acotada:** Se añadieron `abrirLecturaCSV()`, `abrirLecturaLogs()` y `leerUltimosRegistros()` (ventana deslizante en RAM de solo $N$ filas, evitando cargar todo el archivo).
   - **Cierre seguro:** `desmontarSD()` ejecuta `SD.end()` seguido de `_spiSD.end()` antes del Deep Sleep.
@@ -89,7 +89,8 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 - **Qué cambió respecto al legado y al andamio inicial (corrección crítica de RAM):**
   - **Streaming HTTP sin OOM:** En el andamio inicial, `/descargar` y `/logs` cargaban el archivo completo en un objeto `String` en RAM, lo que provocaba agotamiento de memoria (`Out of Memory`) a medida que crecía `MUNDONUEVO.csv`. Se reemplazó por **`_servidor.streamFile()`** directo desde `File` (SD o LittleFS).
   - **Rutas completas del legado:** `/`, `/descargar`, `/logs`, `/borrar` (preservando la cabecera CSV), `/apagar` y `/salir` (con espera no bloqueante de $150\,\text{ms}$ atendiendo `_servidor.handleClient()` para garantizar que el navegador reciba la respuesta HTTP antes de apagar el WiFi).
-  - **Vista previa web segura:** La página `/` muestra solo los **últimos 5 registros** del CSV mediante `leerUltimosRegistros(5, ...)`.
+  - **Vista previa web segura:** La página `/` muestra solo los **últimos 5 registros** del CSV mediante `leerUltimosRegistros(5, ...)`; si opera desde LittleFS (`/buffer_pendiente.csv` sin fila de encabezados), no consume la primera medición como cabecera.
+  - **Respaldo de pull-up RTC en Deep Sleep (`GPIO 32`):** En `entrarEnDeepSleep()` (`src/main.cpp`) se habilita explícitamente `rtc_gpio_pullup_en(PIN_BOTON_SERVICIO)` / `rtc_gpio_pulldown_dis()` antes de `esp_sleep_enable_ext0_wakeup(...)`, y en `ServiceMode::begin()` se ejecuta `rtc_gpio_deinit()` al despertar antes de `pinMode(INPUT_PULLUP)` para evitar falsos despertares por pin flotante.
   - **Manejo limpio de ISR del botón (`GPIO 32`):** Al entrar a `ejecutarServidor()`, se desacopla temporalmente la interrupción (`detachInterrupt`), se limpian banderas y rebotes al soltar el botón, y al salir se limpia el estado antes de rearmar `attachInterrupt` y `EXT0`.
 - **Por qué mejora la estación:** Elimina el riesgo de cuelgue por saturación de heap durante descargas de archivos históricos largos en campo y previene reentradas falsas por rebote mecánico del pulsador físico.
 
@@ -105,11 +106,8 @@ Todos los pines y factores de calibración en `include/sigatok_config.h` se cont
 ## 4. Verificación de Compilación y Trazabilidad Git
 
 - **Comando ejecutado:** `pio run -e esp32dev` (PlatformIO Core, plataforma `espressif32 @ 6.12.0`, framework Arduino, compilador `-std=gnu++17`).
-- **Resultado:** `SUCCESS` en `82.37 s`.
+- **Resultado:** `SUCCESS` en `24.67 s`.
   - **RAM utilizada:** `46,928 bytes` (`14.3%` de `327,680 bytes`).
-  - **Flash utilizada:** `922,253 bytes` (`70.4%` de `1,310,720 bytes`).
-- **Historial de commits relevantes en `origin/main`:**
-  - `f77a4f9`: Andamio modular inicial C++17 y respaldo histórico en `legacy/`.
-  - `654a897`: Eliminación del directorio `legacy/` en el repositorio remoto (`Delete legacy directory`).
-  - `bb0a95b`: Implementación de paridad 1:1 Fase 1, correcciones SPI/ISR/streaming/EMA.
-  - *(Actual)*: Limpieza total de referencias `ESP32-S3` (placa única `esp32dev`), corrección `_wire` en `TimeManager` y publicación de este informe en GitHub.
+  - **Flash utilizada:** `922,501 bytes` (`70.4%` de `1,310,720 bytes`).
+- **Historial limpio en GitHub (`origin/main`):**
+  - El código MicroPython `legacy/` fue purgado completamente del historial remoto (conservado únicamente en copia local ignorada por `.gitignore`), dejando el repositorio `dfelipeduquel/Sigatoka_C` 100% en C++.

@@ -7,6 +7,7 @@
 
 #include "ServiceMode.h"
 #include <esp_sleep.h>
+#include <driver/rtc_io.h>
 #include <vector>
 
 volatile bool ServiceMode::_solicitudServicio = false;
@@ -16,6 +17,8 @@ ServiceMode::ServiceMode(StorageManager* storage, TimeManager* timeMgr, gpio_num
     : _storage(storage), _timeMgr(timeMgr), _pinBoton(pinBoton), _servidor(80), _servidorActivo(false) {}
 
 void ServiceMode::begin() {
+    // Asegurar que el pin retorne al dominio GPIO digital tras un despertar RTC EXT0
+    rtc_gpio_deinit(_pinBoton);
     pinMode(_pinBoton, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(_pinBoton), ServiceMode::manejarInterrupcionBoton, FALLING);
 

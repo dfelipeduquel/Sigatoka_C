@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_sleep.h>
+#include <driver/rtc_io.h>
 
 #include "sigatok_config.h"
 #include "sigatok_types.h"
@@ -273,7 +274,9 @@ void entrarEnDeepSleep() {
     // 1. Temporizador periódico (30 minutos)
     esp_sleep_enable_timer_wakeup(SigatokaConfig::TIEMPO_DEEP_SLEEP_US);
 
-    // 2. Botón de servicio físico en GPIO 32 (nivel bajo / EXT0)
+    // 2. Botón de servicio físico en GPIO 32 (nivel bajo / EXT0) con pull-up RTC activo en Deep Sleep
+    rtc_gpio_pullup_en(SigatokaConfig::PIN_BOTON_SERVICIO);
+    rtc_gpio_pulldown_dis(SigatokaConfig::PIN_BOTON_SERVICIO);
     esp_sleep_enable_ext0_wakeup(SigatokaConfig::PIN_BOTON_SERVICIO, 0);
 
     Serial.printf("🌙 Durmiendo %llu minutos. Wakeup reconfigurado (Timer + EXT0 GPIO32).\n",

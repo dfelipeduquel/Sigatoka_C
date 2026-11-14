@@ -97,7 +97,10 @@ C:\Users\danie\Developer\Estacion_Sigatoka/
 - **Corrección en `TimeManager`:** Se conserva el puntero `TwoWire* _wire` recibido en `begin(&I2CBus)` para que `ajustarFechaHora()` opere siempre sobre el bus I2C de campo (`SDA=27`, `SCL=26`).
 - **Informe Detallado:** Documentación exhaustiva de cambios y mejoras generada en `docs/INFORME_CAMBIOS_Y_MEJORAS_FASE1.md`.
 - **Validación de Compilación (`pio run -e esp32dev`):**
-  - `esp32dev`: `SUCCESS` en `82.37 s` — RAM: `46,928 bytes (14.3% / 327,680 B)`, Flash: `922,253 bytes (70.4% / 1,310,720 B)`.
+  - `esp32dev`: `SUCCESS` en `24.67 s` — RAM: `46,928 bytes (14.3% / 327,680 B)`, Flash: `922,501 bytes (70.4% / 1,310,720 B)`.
+- **Auditoría Final de Paridad y Limpieza GitHub:**
+  - Añadido `rtc_gpio_pullup_en` / `rtc_gpio_deinit` en `GPIO 32` para proteger `EXT0` durante Deep Sleep y corregida la lectura de cabecera en `leerUltimosRegistros()` al respaldar desde LittleFS.
+  - Directorio `legacy/` purgado del historial completo de GitHub y conservado exclusivamente en local (excluido en `.gitignore`).
 
 ### Versión 1.1.0-cpp — Fase 1: Paridad Fiel 1:1 con Campo (14/Nov/2026)
 - **Alineación Total con Brújula Legacy (`main.py`):**
@@ -112,7 +115,7 @@ C:\Users\danie\Developer\Estacion_Sigatoka/
 
 ### Versión 1.0.0-cpp (10/Nov/2026)
 - **Vinculación Git:** Rama `main` vinculada al remoto `https://github.com/dfelipeduquel/Sigatoka_C.git`.
-- **Aseguramiento de Archivos Legacy:** Todos los scripts de MicroPython organizados en `legacy/micropython/` sin pérdidas de código previo (respaldo histórico en commit `f77a4f9`).
+- **Aseguramiento de Archivos Legacy:** Scripts de MicroPython conservados únicamente como respaldo local en `legacy/` (excluido de GitHub vía `.gitignore`).
 - **Implementación de Reglas Innegociables:**
   - Prohibición total de `delay()` en loops de adquisición (uso de `vTaskDelay` y `millis`).
   - Implementación de **LittleFS** para memoria Flash interna y **SPI** para MicroSD física.
