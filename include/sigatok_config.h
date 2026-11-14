@@ -25,39 +25,15 @@
 namespace SigatokaConfig {
 
     // =========================================================================
-    // 1. ASIGNACIÓN DE PINES GPIO
-    //    - ESP32 clásico: Brújula exacta legacy/micropython/main.py (campo)
-    //    - ESP32-S3: Mapeo seguro evitando pines Flash/PSRAM (26-32) y USB (19-20)
+    // 1. ASIGNACIÓN DE PINES GPIO (ESP32 DevKit v1 — Brújula exacta de campo)
+    //    Extraídos directamente de legacy/micropython/main.py.
     // =========================================================================
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    // Bus I2C (ADS1115 0x48 y TinyRTC DS1307 0x68)
-    constexpr gpio_num_t PIN_I2C_SDA        = GPIO_NUM_8;
-    constexpr gpio_num_t PIN_I2C_SCL        = GPIO_NUM_9;
-
-    // Bus SPI (MicroSD Card - FSPI/SPI2)
-    constexpr gpio_num_t PIN_SPI_SCK        = GPIO_NUM_12;
-    constexpr gpio_num_t PIN_SPI_MOSI       = GPIO_NUM_11;
-    constexpr gpio_num_t PIN_SPI_MISO       = GPIO_NUM_13;
-    constexpr gpio_num_t PIN_SPI_CS_SD      = GPIO_NUM_10;
-
-    // Sensores Meteorológicos de Pulsos (Interrupciones)
-    constexpr gpio_num_t PIN_PLUVIOMETRO    = GPIO_NUM_4;  // Interruptor Reed de balancín
-    constexpr gpio_num_t PIN_ANEMOMETRO     = GPIO_NUM_5;  // Interruptor Reed de cazoletas
-
-    // Sensores de Microclima y Estado
-    constexpr gpio_num_t PIN_AM2305B        = GPIO_NUM_6;  // Termo-higrómetro digital (protocolo DHT22)
-    constexpr gpio_num_t PIN_LED_ESTADO     = GPIO_NUM_2;  // LED indicador de ciclo activo
-
-    // Control de Interrupciones y Modo Servicio (RTC GPIO válido para EXT0)
-    constexpr gpio_num_t PIN_BOTON_SERVICIO = GPIO_NUM_1;  // Botón físico (Wakeup EXT0 nivel bajo / ISR)
-    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Reservado Fase 5: Señal despertar ESP32-CAM
-#else
     // Bus I2C (ADS1115 0x48 y TinyRTC DS1307 0x68)
     constexpr gpio_num_t PIN_I2C_SDA        = GPIO_NUM_27;
     constexpr gpio_num_t PIN_I2C_SCL        = GPIO_NUM_26;
 
-    // Bus SPI (MicroSD Card)
+    // Bus SPI (MicroSD Card sobre periférico VSPI)
     constexpr gpio_num_t PIN_SPI_SCK        = GPIO_NUM_21;
     constexpr gpio_num_t PIN_SPI_MOSI       = GPIO_NUM_19;
     constexpr gpio_num_t PIN_SPI_MISO       = GPIO_NUM_18;
@@ -73,8 +49,7 @@ namespace SigatokaConfig {
 
     // Control de Interrupciones y Modo Servicio
     constexpr gpio_num_t PIN_BOTON_SERVICIO = GPIO_NUM_32; // Botón físico (Wakeup EXT0 nivel bajo / ISR)
-    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Reservado Fase 5: Señal despertar ESP32-CAM
-#endif
+    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Reservado legado: señal ESP32-CAM (deshabilitado)
 
     constexpr uint32_t   I2C_FREQUENCY_HZ   = 400000;      // 400 kHz Fast-Mode
 

@@ -16,10 +16,11 @@ namespace {
     }
 }
 
-TimeManager::TimeManager() : _disponible(false) {}
+TimeManager::TimeManager() : _wire(&Wire), _disponible(false) {}
 
 bool TimeManager::begin(TwoWire* wire) {
-    if (_rtcDS1307.begin(wire)) {
+    _wire = (wire != nullptr) ? wire : &Wire;
+    if (_rtcDS1307.begin(_wire)) {
         if (_rtcDS1307.isrunning()) {
             DateTime ahora = _rtcDS1307.now();
             if (fechaValida(ahora)) {
@@ -69,7 +70,7 @@ String TimeManager::obtenerCadenaCompleta() {
 void TimeManager::ajustarFechaHora(uint16_t anio, uint8_t mes, uint8_t dia,
                                    uint8_t hora, uint8_t minuto, uint8_t segundo) {
     DateTime nuevaFecha(anio, mes, dia, hora, minuto, segundo);
-    if (_rtcDS1307.begin(&Wire)) {
+    if (_rtcDS1307.begin(_wire)) {
         _rtcDS1307.adjust(nuevaFecha);
         _disponible = true;
     }

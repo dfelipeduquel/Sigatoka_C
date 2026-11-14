@@ -14,27 +14,26 @@ El proyecto **SIGATOK** tiene como objetivo el monitoreo agrometeorológico de a
 2. **Humedad relativa ambiente saturada** ($\ge 90\%$).
 3. **Dinámica de viento y precipitación** que dispersan ascosporas y conidios.
 
-Para garantizar robustez en campo, bajo consumo energético (batería/panel solar) y cero congelamiento de ejecución, se ejecuta la migración total desde el prototipo histórico en **MicroPython** hacia una arquitectura modular en **C++17 con PlatformIO y Arduino Framework** sobre microcontroladores **ESP32 DevKit v1 / ESP32-S3**.
+Para garantizar robustez en campo, bajo consumo energético (batería/panel solar) y cero congelamiento de ejecución, se ejecuta la migración total desde el prototipo histórico en **MicroPython** hacia una arquitectura modular en **C++17 con PlatformIO y Arduino Framework** exclusivamente sobre el microcontrolador de la estación en campo: **ESP32 DevKit v1 (`esp32dev`)**, conservando exactamente los mismos sensores, periféricos y pinout heredados (sin placas nuevas ni sensores adicionales).
 
 ---
 
-## 2. Mapa de Arquitectura de Hardware y Pines GPIO (Brújula de Campo vs ESP32-S3)
+## 2. Mapa de Arquitectura de Hardware y Pines GPIO (ESP32 DevKit v1 — Brújula de Campo)
 
-> **Nota:** En `esp32dev` se respeta al 100% el pinout de campo extraído de `legacy/micropython/main.py` (`include/sigatok_config.h`). Para `esp32s3` se define un mapa seguro sin conflicto con USB/Flash/GPIO inexistentes (`CONFIG_IDF_TARGET_ESP32S3`).
+> **Regla de Ancla Física:** El único target de compilación es `esp32dev` y su mapa GPIO reproduce el archivo operativo `main.py` del código heredado. Las banderas `SIGATOK_ENABLE_LEAF_WETNESS`, `SIGATOK_ENABLE_TELEGRAM` y `SIGATOK_ENABLE_CAM` permanecen en `0` (deshabilitadas).
 
-| Subsistema / Sensor | Protocolo / Bus | Pin GPIO ESP32 (Campo) | Parámetros Físicos / Calibración | Tratamiento de Señal |
+| Subsistema / Sensor | Protocolo / Bus | Pin GPIO ESP32 | Parámetros Físicos / Calibración | Tratamiento de Señal / Estado Fase 1 |
 | :--- | :--- | :--- | :--- | :--- |
 | **Bus I2C Principal** | I2C (400 kHz) | `SDA: 27` / `SCL: 26` | ADS1115 (0x48) + TinyRTC DS1307 (0x68) | Pull-ups externos en PCB Kilby |
 | **Pluviómetro de Balancín** | Pulso / ISR (`esp_timer`) | `GPIO 23` | $0.30\,\text{mm/pulso}$ | Debounce ISR sin bloqueo ($\ge 150\,\text{ms}$) |
 | **Anemómetro de Cazoletas** | Pulso / ISR (`esp_timer`) | `GPIO 22` | $v = f \times 0.188\,\text{m/s}$ | Debounce ($\ge 60\,\text{ms}$) sobre duración real de ventana |
 | **Veleta de Dirección** | Analógico vía ADS1115 | `AIN0 (ADS1115)` | $0.0\,\text{V} - 4.1\,\text{V}$ (8 rumbos cardinales) | **Filtro EMA ($\alpha=0.35$)** + muestreo cada $2\,\text{s}$ en ventana |
-| **Sensor Humectación Foliar** | Analógico vía ADS1115 | `AIN1 (ADS1115)` | $3.30\,\text{V}$ (seco) a $1.10\,\text{V}$ (saturado) | **Filtro EMA ($\alpha=0.15$)** + acumulador mojado *(Fase 3)* |
 | **Microclima (AM2305B / DHT22)** | Unibus Digital | `GPIO 16` | $-40\text{ a }80^\circ\text{C}$, $0\text{ a }100\%\,\text{RH}$ | 1 reintento no bloqueante ($2100\,\text{ms}$) ante fallo CRC |
-| **Almacenamiento MicroSD** | SPI Hardware (`VSPI` / `FSPI`) | `SCK: 21, MOSI: 19, MISO: 18, CS: 17` | FAT32 (`/MUNDONUEVO.csv`, `/logs.txt`) | Streaming sin `String` masivos; copia en bloques $512\,\text{B}$ |
+| **Almacenamiento MicroSD** | SPI Hardware (`VSPI`) | `SCK: 21, MOSI: 19, MISO: 18, CS: 17` | FAT32 (`/MUNDONUEVO.csv`, `/logs.txt`) | Streaming sin `String` masivos; copia en bloques $512\,\text{B}$ |
 | **Memoria Flash Interna** | LittleFS | Flash embebida | `/buffer_pendiente.csv`, `/logs_flash.txt` | Respaldo automático ante falla SD + volcado seguro |
 | **Botón Modo Servicio / Wakeup** | Digital / EXT0 | `GPIO 32` | Despertar en nivel bajo (`EXT0`) | ISR desacoplada en servidor web; pulsación $\ge 1\,\text{s}$: salir |
-| **Control Nodo ESP32-CAM** | Pulso Digital | `GPIO 14` | Pulso alto $\ge 200\,\text{ms}$ para despertar CAM | Handshake TCP Socket en puerto 8080 *(Fase 5)* |
 | **LED Indicador de Estado** | Digital Out | `GPIO 2` | 1 = Ciclo activo / 0 = Deep Sleep | Indicador visual de consumo en campo |
+| **Módulos fuera de Fase 1** | - | `GPIO 14` (CAM) / `AIN1` | `SIGATOK_ENABLE_* = 0` | **No compilados ni activos en Fase 1** |
 
 ---
 
@@ -44,7 +43,7 @@ Para garantizar robustez en campo, bajo consumo energético (batería/panel sola
 | :--- | :--- | :--- | :--- |
 | `main.py` | `src/main.cpp` | ✅ Migrado | Orquestación por máquina de estados sin `delay()` bloqueante; gestión de Deep Sleep (30 min) y despertar por EXT0/Timer. |
 | `Header_sensoresEstacion.py` | `lib/WeatherSensors/` (`RainGauge`, `Anemometer`, `WindVane`) | ✅ Migrado | Conteo atómico en ISR con `portMUX_TYPE`, cálculo de frecuencia de viento exacta en m/s, mapeo cardinal preciso. |
-| `Header_sensoresEstacion.py` (Foliar) | `lib/LeafWetness/` (`LeafWetnessSensor`) | ✅ Migrado | Incorporación de **Filtro EMA ($\alpha=0.15$)** para eliminar ruido inductivo/capacitivo y cálculo acumulativo de horas de hoja húmeda en RTC Memory. |
+| `Header_sensoresEstacion.py` (Foliar N/A) | `lib/LeafWetness/` (`LeafWetnessSensor`) | ⏸️ Deshabilitado (`=0`) | Módulo heredado del andamio inicial; no pertenece al hardware actual de campo y permanece apagado (`SIGATOK_ENABLE_LEAF_WETNESS=0`). |
 | `ads1x15.py` | Driver Adafruit ADS1X15 + wrapper en C++ | ✅ Migrado | Lecturas de 16 bits sin sobrecarga de heap en MicroPython. |
 | `ds1307.py` / `RTC.py` / `Header_tiempo.py` | `lib/TimeManager/` (`TimeManager`) | ✅ Migrado | Sincronización I2C con DS1307 y fallback transparente a RTC interno del ESP32 en caso de batería agotada. |
 | `Header_microSD.py` / `sdcard.py` | `lib/StorageManager/` (`StorageManager`) | ✅ Migrado | Sistema híbrido: MicroSD física (SPI) + LittleFS Flash interna como buffer automático ante extracción o error de tarjeta. |
@@ -60,10 +59,11 @@ Para garantizar robustez en campo, bajo consumo energético (batería/panel sola
 ```text
 C:\Users\danie\Developer\Estacion_Sigatoka/
 ├── .gitignore                      # Reglas de exclusión para PlatformIO, cachés y secretos
-├── platformio.ini                  # Configuración dual (ESP32 DevKit v1 y ESP32-S3) en C++17
+├── platformio.ini                  # Configuración única para ESP32 DevKit v1 (esp32dev) en C++17
 ├── Sigatoka.code-workspace         # Espacio de trabajo multi-carpeta de VS Code
 ├── docs/
-│   └── SEGUIMIENTO_MIGRACION_SIGATOKA.md # Este documento vivo de seguimiento
+│   ├── SEGUIMIENTO_MIGRACION_SIGATOKA.md      # Este documento vivo de seguimiento
+│   └── INFORME_CAMBIOS_Y_MEJORAS_FASE1.md     # Informe técnico detallado Legacy -> C++ Fase 1
 ├── legacy/
 │   └── micropython/
 │       ├── ads1x15.py, boot.py, ds1307.py, Header_*.py, main.py, RTC.py, sdcard.py
@@ -90,43 +90,43 @@ C:\Users\danie\Developer\Estacion_Sigatoka/
 
 ## 5. Trazabilidad de Cambios y Mejoras Técnicas
 
+### Versión 1.1.1-cpp — Corrección de Hardware Único (`esp32dev`) (14/Nov/2026)
+- **Eliminación Completa de ESP32-S3:**
+  - Se removió `[env:esp32s3]` de `platformio.ini` y las ramas condicionales `CONFIG_IDF_TARGET_ESP32S3` de `include/sigatok_config.h` y `lib/StorageManager/StorageManager.cpp`.
+  - La compilación y el mapa de pines quedan fijados al 100% en la placa real de campo: **ESP32 DevKit v1 (`esp32dev`)** usando bus `VSPI` para MicroSD y los pines heredados sin alteraciones ni sensores nuevos.
+- **Corrección en `TimeManager`:** Se conserva el puntero `TwoWire* _wire` recibido en `begin(&I2CBus)` para que `ajustarFechaHora()` opere siempre sobre el bus I2C de campo (`SDA=27`, `SCL=26`).
+- **Informe Detallado:** Documentación exhaustiva de cambios y mejoras generada en `docs/INFORME_CAMBIOS_Y_MEJORAS_FASE1.md`.
+- **Validación de Compilación (`pio run -e esp32dev`):**
+  - `esp32dev`: `SUCCESS` en `82.37 s` — RAM: `46,928 bytes (14.3% / 327,680 B)`, Flash: `922,253 bytes (70.4% / 1,310,720 B)`.
+
 ### Versión 1.1.0-cpp — Fase 1: Paridad Fiel 1:1 con Campo (14/Nov/2026)
-- **Alineación Total con Brújula Legacy (`legacy/micropython/main.py`):**
+- **Alineación Total con Brújula Legacy (`main.py`):**
   - Feature flags en `include/sigatok_config.h`: `SIGATOK_ENABLE_LEAF_WETNESS=0`, `SIGATOK_ENABLE_TELEGRAM=0`, `SIGATOK_ENABLE_CAM=0` para operación offline fiel a la estación desplegada.
   - CSV de 7 columnas idéntico al archivo en campo (`Date,Time,Precipitation,Wind Velocity,Wind Direction,Temperature,Humidity`) con `char direccion_viento[18]` para evitar truncamiento de `"Fuera de rango"`.
 - **Endurecimiento de Drivers y Memoria:**
   - `RainGauge` y `Anemometer`: ISR migradas a `esp_timer_get_time()` con debounce configurable por instancia y cálculo exacto sobre `duracionRealSeg`.
   - `WindVane`: Integración de `EmaFilter` ($\alpha = 0.35$) muestreada cada $2\,\text{s}$ durante la ventana de $60\,\text{s}$ más ráfaga de respaldo.
   - `TimeManager`: Validación `fechaValida()` (`2020..2099`) previa a sincronizar `settimeofday` desde DS1307 con respaldo de RTC interno.
-  - `StorageManager`: Corrección de bus SPI (`VSPI` en ESP32 clásico / `FSPI` en ESP32-S3), copia en bloques de $512\,\text{B}$ desde LittleFS (`/buffer_pendiente.csv` y `/logs_flash.txt`) hacia MicroSD, y cierre limpio con `_spiSD.end()`.
+  - `StorageManager`: Corrección de bus SPI a `VSPI`, copia en bloques de $512\,\text{B}$ desde LittleFS (`/buffer_pendiente.csv` y `/logs_flash.txt`) hacia MicroSD, y cierre limpio con `_spiSD.end()`.
   - `ServiceMode`: Streaming HTTP directo con `_servidor.streamFile()` para `/descargar` y `/logs` (cero riesgo de OOM), tabla previa limitada a 5 registros, ruta `/apagar`, y gestión segura de ISR del botón GPIO 32.
-- **Validación Dual Exitosa (`pio run -e esp32dev -e esp32s3`):**
-  - `esp32dev`: `SUCCESS` en `20.63 s` — RAM: `46,928 bytes (14.3% / 327,680 B)`, Flash: `922,249 bytes (70.4% / 1,310,720 B)`.
-  - `esp32s3`: `SUCCESS` en `57.55 s` — RAM: `46,576 bytes (14.2% / 327,680 B)`, Flash: `869,825 bytes (26.0% / 3,342,336 B)`.
 
 ### Versión 1.0.0-cpp (10/Nov/2026)
 - **Vinculación Git:** Rama `main` vinculada al remoto `https://github.com/dfelipeduquel/Sigatoka_C.git`.
-- **Aseguramiento de Archivos Legacy:** Todos los scripts de MicroPython organizados en `legacy/micropython/` sin pérdidas de código previo.
+- **Aseguramiento de Archivos Legacy:** Todos los scripts de MicroPython organizados en `legacy/micropython/` sin pérdidas de código previo (respaldo histórico en commit `f77a4f9`).
 - **Implementación de Reglas Innegociables:**
   - Prohibición total de `delay()` en loops de adquisición (uso de `vTaskDelay` y `millis`).
   - Implementación de **LittleFS** para memoria Flash interna y **SPI** para MicroSD física.
-  - **Filtro EMA ($\alpha=0.15$)** integrado en el driver de humectación foliar.
   - Comentarios 100% técnicos en español con rigor agrometeorológico.
-- **Compilación Modular:** Configuración de `platformio.ini` con soporte C++17 (`-std=gnu++17`) para ESP32 y ESP32-S3.
+- **Compilación Modular:** Configuración inicial de `platformio.ini` con soporte C++17 (`-std=gnu++17`). *(Nota: el entorno secundario ESP32-S3 incluido en este andamio inicial fue retirado en v1.1.1-cpp).*
 
 ---
 
-## 6. Hoja de Ruta Oficial (5 Fases de Despliegue)
+## 6. Hoja de Ruta Oficial (Misma Placa ESP32 DevKit v1 y Hardware Existente)
 
-1. [x] **Fase 1 — Paridad Fiel 1:1 Offline + Robustez C++ (COMPLETADA - Compilada, pendiente prueba en banco):**
-   - Réplica exacta de `main.py` en C++17 sin WiFi cliente, Telegram ni ESP32-CAM.
-   - Modo Servicio AP (`ESTACION_METEO_DATOS`, `192.168.4.1`) con descarga por streaming y botón wakeup EXT0.
-   - *Siguiente validación física:* Banco de pruebas con ESP32 DevKit v1 + ADS1115 + DS1307 + MicroSD + botón/pulsos.
-2. [ ] **Fase 2 — Optimización Energética, Telemetría Interna y Watchdog:**
-   - Monitoreo de batería/panel solar (si aplica en PCB), `esp_task_wdt`, ajuste fino de tiempos de estabilización y diagnóstico serial/log avanzado.
-3. [ ] **Fase 3 — Sensor de Humectación Foliar (`SIGATOK_ENABLE_LEAF_WETNESS=1`):**
-   - Activación del canal `AIN1` del ADS1115 con filtro EMA ($\alpha=0.15$), calibración seco/agua en campo y acumulador de horas de hoja mojada para índice epidemiológico de Sigatoka Negra.
-4. [ ] **Fase 4 — Conectividad WiFi Cliente, NTP y Telegram (`SIGATOK_ENABLE_TELEGRAM=1`):**
-   - Conexión periódica o bajo demanda, sincronización NTP del RTC y alertas agronómicas vía Bot de Telegram con credenciales desacopladas.
-5. [ ] **Fase 5 — Integración Nodo ESP32-CAM (`SIGATOK_ENABLE_CAM=1`):**
-   - Pulso de despertar en GPIO 14, servidor/handshake TCP Socket en puerto 8080, recepción/almacenamiento de capturas JPEG en MicroSD y validación conjunta.
+1. [x] **Fase 1 — Paridad Fiel 1:1 Offline en ESP32 DevKit v1 (COMPLETADA - Compilada, pendiente prueba en banco):**
+   - Réplica exacta de `main.py` en C++17 sobre `esp32dev` con los mismos 4 sensores de campo, DS1307, MicroSD y Modo Servicio AP (`ESTACION_METEO_DATOS`, `192.168.4.1`).
+2. [ ] **Fase 2 — Validación Física en Banco y Endurecimiento Operativo (Misma Placa):**
+   - Prueba real de pines, bus I2C (`SDA 27 / SCL 26`), SPI `VSPI`, pulsos GPIO 22/23, EXT0 GPIO 32 y portal web.
+   - Incorporación de `esp_task_wdt` (Watchdog de tarea) y ajuste fino de tiempos de estabilización sin agregar sensores ni cambiar placa.
+3. [ ] **Fase 3 (Opcional según decisión en campo) — Módulos Legacy Dormidos:**
+   - Activación controlada únicamente de los módulos que ya existían en los scripts heredados (`Header_Telegram.py` / `cam/`) solo si la estación física cuenta con cobertura WiFi o nodo CAM operativo. **No se agregan placas ni sensores nuevos.**

@@ -44,6 +44,7 @@ public:
 
 private:
     RTC_DS1307 _rtcDS1307;
+    TwoWire*   _wire;
     bool       _disponible;
 };
 

@@ -7,14 +7,8 @@
 
 #include "StorageManager.h"
 
-// Selección segura del periférico SPI según arquitectura objetivo:
-// En ESP32 clásico, FSPI (1) pertenece a la Flash interna; VSPI (3) es el bus libre.
-// En ESP32-S3, FSPI (0) es el bus SPI2 de propósito general.
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    #define SIGATOK_SD_SPI_HOST FSPI
-#else
-    #define SIGATOK_SD_SPI_HOST VSPI
-#endif
+// En ESP32 DevKit v1 clásico, FSPI (1) pertenece a la Flash interna; VSPI (3) es el bus SPI libre para MicroSD.
+#define SIGATOK_SD_SPI_HOST VSPI
 
 static const char* CABECERA_CSV =
     "Date,Time,Precipitation,Wind Velocity,Wind Direction,Temperature,Humidity"
