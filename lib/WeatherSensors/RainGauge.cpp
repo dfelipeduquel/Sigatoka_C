@@ -6,9 +6,11 @@
  */
 
 #include "RainGauge.h"
+#include <esp_timer.h>
 
 volatile uint32_t RainGauge::_contadorPulsos = 0;
-volatile uint32_t RainGauge::_ultimoTiempoPulsoMs = 0;
+volatile uint64_t RainGauge::_ultimoTiempoPulsoUs = 0;
+volatile uint64_t RainGauge::_debounceStaticUs = SigatokaConfig::PLUVIO_DEBOUNCE_TIME_MS * 1000ULL;
 volatile bool     RainGauge::_medicionActiva = false;
 portMUX_TYPE      RainGauge::_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -16,15 +18,18 @@ RainGauge::RainGauge(gpio_num_t pin, float mmPorPulso, uint32_t debounceMs)
     : _pin(pin), _mmPorPulso(mmPorPulso), _debounceMs(debounceMs) {}
 
 void RainGauge::begin() {
+    _debounceStaticUs = static_cast<uint64_t>(_debounceMs) * 1000ULL;
     pinMode(_pin, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(_pin), RainGauge::manejarInterrupcion, FALLING);
 }
 
 void RainGauge::iniciarVentana() {
+    uint64_t ahoraUs = static_cast<uint64_t>(esp_timer_get_time());
     portENTER_CRITICAL(&_mux);
     _contadorPulsos = 0;
     _medicionActiva = true;
-    _ultimoTiempoPulsoMs = millis();
+    // Permitir que el primer pulso válido tras iniciarVentana() se capture inmediatamente
+    _ultimoTiempoPulsoUs = (ahoraUs >= _debounceStaticUs) ? (ahoraUs - _debounceStaticUs) : 0;
     portEXIT_CRITICAL(&_mux);
 }
 
@@ -51,12 +56,12 @@ uint32_t RainGauge::obtenerPulsosActuales() const {
 void IRAM_ATTR RainGauge::manejarInterrupcion() {
     if (!_medicionActiva) return;
 
-    uint32_t tiempoActual = millis();
-    // Filtro antirrebote por software para contacto mecánico
-    if ((tiempoActual - _ultimoTiempoPulsoMs) >= SigatokaConfig::PLUVIO_DEBOUNCE_TIME_MS) {
-        _ultimoTiempoPulsoMs = tiempoActual;
-        portENTER_CRITICAL_ISR(&_mux);
+    uint64_t tiempoActualUs = static_cast<uint64_t>(esp_timer_get_time());
+    portENTER_CRITICAL_ISR(&_mux);
+    // Filtro antirrebote por software en microsegundos seguro dentro de IRAM_ATTR
+    if ((tiempoActualUs - _ultimoTiempoPulsoUs) >= _debounceStaticUs) {
+        _ultimoTiempoPulsoUs = tiempoActualUs;
         _contadorPulsos++;
-        portEXIT_CRITICAL_ISR(&_mux);
     }
+    portEXIT_CRITICAL_ISR(&_mux);
 }

@@ -1,13 +1,13 @@
 /**
  * @file WindVane.cpp
- * @brief Implementación del driver para veleta de dirección vía ADS1115.
+ * @brief Implementación del driver para veleta de dirección vía ADS1115 con filtro EMA.
  * @project SIGATOK - Estación Agrometeorológica y Monitoreo Foliar
  * @author Daniel Felipe Duque Lizarralde
  */
 
 #include "WindVane.h"
 
-// Calibración de cuadrantes según mediciones de tensión legacy del Semillero Kilby
+// Calibración de cuadrantes 1:1 según mediciones legacy de Header_sensoresEstacion.py
 const RangoDireccion WindVane::TABLA_RANGOS[8] = {
     {3.700f, 3.940f, "N"},    // N  ~ 3.785 V
     {1.810f, 2.625f, "NE"},   // NE ~ 2.221 V
@@ -19,8 +19,8 @@ const RangoDireccion WindVane::TABLA_RANGOS[8] = {
     {3.946f, 4.100f, "W"}     // W ~ 4.096 V / NW
 };
 
-WindVane::WindVane(Adafruit_ADS1115* ads, uint8_t canal)
-    : _ads(ads), _canal(canal) {}
+WindVane::WindVane(Adafruit_ADS1115* ads, uint8_t canal, float alphaEma)
+    : _ads(ads), _canal(canal), _filtroEma(alphaEma), _tieneMuestras(false) {}
 
 const char* WindVane::interpretarVoltaje(float voltaje) {
     for (const auto& rango : TABLA_RANGOS) {
@@ -31,20 +31,39 @@ const char* WindVane::interpretarVoltaje(float voltaje) {
     return "Fuera de rango";
 }
 
+void WindVane::reiniciarFiltro() {
+    _filtroEma.reiniciar(0.0f);
+    _tieneMuestras = false;
+}
+
+float WindVane::muestrear() {
+    if (_ads == nullptr) return 0.0f;
+
+    int16_t adcBits = _ads->readADC_SingleEnded(_canal);
+    float voltios = _ads->computeVolts(adcBits);
+    float filtrado = _filtroEma.filtrar(voltios);
+    _tieneMuestras = true;
+    return filtrado;
+}
+
 const char* WindVane::obtenerDireccion(float* voltajeSalida) {
     if (_ads == nullptr) {
         if (voltajeSalida) *voltajeSalida = 0.0f;
-        return "ERROR_ADC";
+        return "Fuera de rango";
     }
 
-    // Lectura del canal configurado en el ADS1115 (16 bits)
-    int16_t adcBits = _ads->readADC_SingleEnded(_canal);
-    // Conversión a voltios considerando la ganancia configurada (p. ej. GAIN_ONE: +/-4.096V -> 0.125mV/bit)
-    float voltios = _ads->computeVolts(adcBits);
+    // Si no se acumuló ninguna muestra durante la ventana, tomar ráfaga de 5 lecturas EMA
+    if (!_tieneMuestras) {
+        for (uint8_t i = 0; i < 5; i++) {
+            muestrear();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
 
+    float voltiosFiltrados = _filtroEma.obtenerValor();
     if (voltajeSalida) {
-        *voltajeSalida = voltios;
+        *voltajeSalida = voltiosFiltrados;
     }
 
-    return interpretarVoltaje(voltios);
+    return interpretarVoltaje(voltiosFiltrados);
 }

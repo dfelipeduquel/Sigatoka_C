@@ -12,6 +12,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <LittleFS.h>
+#include <vector>
 #include "sigatok_config.h"
 #include "sigatok_types.h"
 
@@ -20,7 +21,7 @@ public:
     StorageManager();
 
     /**
-     * @brief Inicializa los buses de almacenamiento (MicroSD y LittleFS).
+     * @brief Inicializa los buses de almacenamiento (LittleFS y MicroSD SPI).
      * @return true si al menos un sistema de archivos está operativo.
      */
     bool begin();
@@ -33,34 +34,40 @@ public:
     bool guardarRegistro(const RegistroCompletoEstacion& registro);
 
     /**
-     * @brief Registra un evento en la bitácora logs.txt.
+     * @brief Registra un evento en la bitácora logs.txt (con respaldo en LittleFS).
      * @param marcaTiempo Cadena "YYYY-MM-DD HH:MM:SS".
      * @param mensaje Descripción del evento o alerta.
      */
     bool escribirLog(const String& marcaTiempo, const String& mensaje);
 
     /**
-     * @brief Lee todo el contenido del CSV de datos (para descarga en Modo Servicio).
+     * @brief Abre el archivo CSV en modo lectura para streaming HTTP sin saturar la RAM.
      */
-    String leerCSV();
+    File abrirLecturaCSV();
 
     /**
-     * @brief Lee la bitácora logs.txt.
+     * @brief Abre el archivo de logs en modo lectura para streaming HTTP.
      */
-    String leerLogs();
+    File abrirLecturaLogs();
 
     /**
-     * @brief Borra los datos del CSV preservando la cabecera.
+     * @brief Obtiene de forma segura en RAM solo los últimos N registros del CSV.
+     */
+    bool leerUltimosRegistros(size_t maxRegistros, String& cabeceraOut, std::vector<String>& filasOut);
+
+    /**
+     * @brief Borra los datos del CSV preservando la cabecera (exacto a Header_ModoServicio.py).
      */
     bool borrarCSV();
 
     /**
-     * @brief Desmonta ordenadamente la MicroSD antes de entrar en Deep Sleep.
+     * @brief Desmonta ordenadamente la MicroSD y libera el bus SPI antes de Deep Sleep.
      */
     void desmontarSD();
 
     bool sdDisponible() const;
     bool littleFsDisponible() const;
+    static const char* obtenerCabeceraCSV();
 
 private:
     SPIClass _spiSD;
@@ -69,6 +76,8 @@ private:
 
     void verificarCabeceraCSV();
     void volcarBufferFlashASD();
+    void volcarLogsFlashASD();
+    void copiarArchivoEnBloques(File& origen, File& destino);
 };
 
 #endif // SIGATOK_STORAGE_MANAGER_H

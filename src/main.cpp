@@ -1,9 +1,11 @@
 /**
  * @file main.cpp
- * @brief Orquestador principal del firmware C++ modular para la estación SIGATOK.
+ * @brief Orquestador principal del firmware C++17 modular para la estación SIGATOK.
  * @project SIGATOK - Estación Agrometeorológica y Monitoreo Foliar
  * @institution Universidad Tecnológica de Pereira (UTP) - Semillero Kilby
  * @author Daniel Felipe Duque Lizarralde
+ *
+ * Fase 1: Paridad fiel 1:1 con legacy/micropython/main.py en campo.
  */
 
 #include <Arduino.h>
@@ -17,11 +19,20 @@
 #include "RainGauge.h"
 #include "Anemometer.h"
 #include "WindVane.h"
-#include "LeafWetnessSensor.h"
 #include "MicroclimateSensor.h"
 #include "ServiceMode.h"
+
+#if SIGATOK_ENABLE_LEAF_WETNESS
+#include "LeafWetnessSensor.h"
+#endif
+
+#if SIGATOK_ENABLE_TELEGRAM
 #include "TelegramNotifier.h"
+#endif
+
+#if SIGATOK_ENABLE_CAM
 #include "CamInterface.h"
+#endif
 
 // =========================================================================
 // OBJETOS Y PERIFÉRICOS GLOBALES
@@ -32,37 +43,37 @@ static TimeManager        timeMgr;
 static StorageManager     storageMgr;
 static RainGauge          rainGauge;
 static Anemometer         anemometer;
-static WindVane           windVane(&ads1115, SigatokaConfig::ADS_CANAL_VELETA);
-static LeafWetnessSensor  leafWetness(&ads1115, SigatokaConfig::ADS_CANAL_HUMECTACION);
+static WindVane           windVane(&ads1115, SigatokaConfig::ADS_CANAL_VELETA, SigatokaConfig::EMA_ALPHA_VELETA);
 static MicroclimateSensor microclimate(SigatokaConfig::PIN_AM2305B, DHT22);
 static ServiceMode        serviceMode(&storageMgr, &timeMgr, SigatokaConfig::PIN_BOTON_SERVICIO);
-static CamInterface       camInterface(SigatokaConfig::PIN_CONTROL_CAM);
 
-// Telemetría Telegram (credenciales legacy de la estación)
-static const char* TELEGRAM_BOT_TOKEN = "8494983222:AAExrG_avdsqAH6HYWSFYuM36Q7CfNHozY8";
-static const int64_t TELEGRAM_CHAT_ID = -5086398969;
-static TelegramNotifier   telegram(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID);
-
-// RTC Memory para preservar la duración acumulada de mojado foliar a través de Deep Sleep
+#if SIGATOK_ENABLE_LEAF_WETNESS
+static LeafWetnessSensor  leafWetness(&ads1115, SigatokaConfig::ADS_CANAL_HUMECTACION);
 RTC_DATA_ATTR static uint32_t duracionHumectacionAcumuladaMin = 0;
+#endif
+
+#if SIGATOK_ENABLE_CAM
+static CamInterface       camInterface(SigatokaConfig::PIN_CONTROL_CAM);
+#endif
+
 RTC_DATA_ATTR static uint32_t contadorCiclos = 0;
 
 // Prototipos de funciones
 void inicializarHardware();
-void verificarPuntosDeControl();
+bool verificarPuntosDeControl();
 void ejecutarCicloMedicion();
 void entrarEnDeepSleep();
 
 void setup() {
     Serial.begin(115200);
-    // Espera no bloqueante para el arranque de la consola si está disponible
+    // Espera breve no bloqueante para enumeración USB/UART (paridad con utime.sleep_ms(500))
     uint32_t t0 = millis();
-    while (!Serial && (millis() - t0 < 1000)) {
+    while (millis() - t0 < 500) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     Serial.println("\n========================================================");
-    Serial.println("🌿 SIGATOK - Estación Agrometeorológica (Firmware C++17)");
+    Serial.println("🌿 SIGATOK - Estación Agrometeorológica (C++17 Fase 1)");
     Serial.println("🏛️ Semillero Kilby - Universidad Tecnológica de Pereira");
     Serial.println("========================================================");
 
@@ -71,31 +82,39 @@ void setup() {
 
     inicializarHardware();
 
-    // 1. Detección de causa de despertar: ¿Fue pulsado el botón de servicio?
+    storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Placa encendida");
+
+    // 1. Detección de despertar por botón físico (EXT0 en GPIO 32)
     if (serviceMode.despertoPorBoton()) {
-        Serial.println("⚡ Despertar por EXT0: Solicitud de MODO SERVICIO activa.");
-        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Despertar por Boton - Entrando a Modo Servicio");
+        Serial.println("⚡ Modo servicio solicitado por EXT0 (GPIO 32).");
+        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Desperto por boton");
         serviceMode.ejecutarServidor();
         entrarEnDeepSleep();
         return;
     }
 
-    // 2. Ejecutar ciclo estándar de monitoreo agroclimático
+    // 2. Checkpoint inicial antes de comenzar mediciones
+    if (verificarPuntosDeControl()) {
+        entrarEnDeepSleep();
+        return;
+    }
+
+    // 3. Ejecutar ciclo de medición agrometeorológica (paridad 1:1 con main.py)
     ejecutarCicloMedicion();
 
-    // 3. Apagado y entrada en sueño profundo
+    // 4. Desmontar interfaces y entrar en Deep Sleep (30 minutos)
     entrarEnDeepSleep();
 }
 
 void loop() {
-    // El bucle principal permanece inactivo: el microcontrolador gestiona la secuencia en setup() y duerme
+    // Ciclo determinista ejecutado por setup() + Deep Sleep; el loop principal no se bloquea.
 }
 
 void inicializarHardware() {
-    // Bus I2C a 400 kHz en pines 27 (SDA) y 26 (SCL)
+    // Bus I2C a 400 kHz en pines legacy: SDA=27, SCL=26
     I2CBus.begin(SigatokaConfig::PIN_I2C_SDA, SigatokaConfig::PIN_I2C_SCL, SigatokaConfig::I2C_FREQUENCY_HZ);
 
-    // Inicializar ADS1115 con ganancia +/- 4.096V (1 bit = 0.125mV)
+    // ADS1115 (0x48) con ganancia +/- 4.096 V (igual a gain=1 en ads1x15.py legacy)
     ads1115.setGain(GAIN_ONE);
     if (!ads1115.begin(0x48, &I2CBus)) {
         Serial.println("⚠️ ADS1115 no respondió en dirección 0x48.");
@@ -103,14 +122,15 @@ void inicializarHardware() {
         Serial.println("✅ ADS1115 16-bit ADC inicializado.");
     }
 
-    // Inicializar RTC DS1307 / TinyRTC
+    // TinyRTC DS1307 (0x68) con respaldo transparente al RTC interno del ESP32
     if (timeMgr.begin(&I2CBus)) {
         Serial.printf("✅ TinyRTC sincronizado: %s\n", timeMgr.obtenerCadenaCompleta().c_str());
     } else {
-        Serial.println("⚠️ TinyRTC no detectado. Utilizando RTC interno del ESP32.");
+        Serial.println("⚠️ TinyRTC no detectado o sin hora válida. Usando RTC interno.");
+        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "TinyRTC fallo, uso RTC interno");
     }
 
-    // Inicializar almacenamiento (MicroSD SPI + LittleFS)
+    // Almacenamiento híbrido: MicroSD (SPI) + LittleFS Flash interna
     if (storageMgr.begin()) {
         Serial.printf("✅ Almacenamiento listo (SD: %s, LittleFS: %s)\n",
                       storageMgr.sdDisponible() ? "OK" : "NO",
@@ -119,93 +139,132 @@ void inicializarHardware() {
         Serial.println("❌ ERROR: Falla crítica de almacenamiento.");
     }
 
-    // Inicializar sensores
+    // Sensores y Modo Servicio
     rainGauge.begin();
     anemometer.begin();
     microclimate.begin();
     serviceMode.begin();
-    camInterface.begin();
 
-    Serial.println("✅ Todos los drivers de sensores y GPIOs configurados.");
+#if SIGATOK_ENABLE_CAM
+    camInterface.begin();
+#endif
+
+    Serial.println("✅ Periféricos y sensores configurados según ancla de campo.");
 }
 
-void verificarPuntosDeControl() {
+bool verificarPuntosDeControl() {
     if (serviceMode.solicitudServicioPendiente()) {
-        Serial.println("⚠️ Punto de control: Botón de servicio presionado en ejecución.");
+        Serial.println("⚠️ Checkpoint: Interrupción de modo servicio solicitada (GPIO 32).");
         serviceMode.ejecutarServidor();
+        return true;
     }
+    return false;
 }
 
 void ejecutarCicloMedicion() {
-    Serial.println("\n📊 Iniciando ventana de integración agrometeorológica (60 s)...");
-    storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Inicio de ciclo de medicion");
+    Serial.println("\n📊 Inicio de ciclo de medición (ventana de 60 s)...");
 
+    windVane.reiniciarFiltro();
     rainGauge.iniciarVentana();
     anemometer.iniciarVentana();
 
-    // Ventana no bloqueante de 60 segundos
     uint32_t inicioVentana = millis();
+    uint32_t ultimoMuestreoVeleta = 0;
+
+    // Ventana no bloqueante de 60 segundos con muestreo periódico EMA de la veleta y checkpoints
     while ((millis() - inicioVentana) < SigatokaConfig::ANEMO_SAMPLE_WINDOW_MS) {
-        verificarPuntosDeControl();
-        vTaskDelay(pdMS_TO_TICKS(100)); // Cede CPU a FreeRTOS y Watchdog sin bloquear
+        if (verificarPuntosDeControl()) {
+            // Al salir de modo servicio abortamos la ventana interrumpida para dormir ordenadamente
+            rainGauge.finalizarYObtenerPrecipitacion();
+            anemometer.finalizarYObtenerVelocidad(1.0f);
+            return;
+        }
+
+        if ((millis() - ultimoMuestreoVeleta) >= 2000) {
+            ultimoMuestreoVeleta = millis();
+            windVane.muestrear();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // 1. Recolección de variables físicas
+    float duracionRealSeg = static_cast<float>(millis() - inicioVentana) / 1000.0f;
+
+    // 1. Recolección de variables meteorológicas
     float lluvia = rainGauge.finalizarYObtenerPrecipitacion();
-    float vientoVel = anemometer.finalizarYObtenerVelocidad(60.0f);
+    float vientoVel = anemometer.finalizarYObtenerVelocidad(duracionRealSeg);
     float voltajeVeleta = 0.0f;
     const char* vientoDir = windVane.obtenerDireccion(&voltajeVeleta);
 
+    // Lectura AM2305B / DHT22 con un reintento no bloqueante si falla el primer pulso
     float temp = 0.0f;
     float hum = 0.0f;
     bool microOk = microclimate.leer(&temp, &hum);
-
-    // 2. Procesamiento de Humectación Foliar (Factor Clave Sigatoka)
-    // El intervalo entre ciclos es de 30 minutos (más 1 min de ventana activa)
-    uint32_t minutosCiclo = (contadorCiclos == 0) ? 1 : (SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN + 1);
-    DatosFoliares foliar = leafWetness.actualizar(minutosCiclo);
-
-    // Actualizar variable persistente en RTC Memory
-    if (foliar.hoja_humectada) {
-        duracionHumectacionAcumuladaMin += minutosCiclo;
-    } else {
-        duracionHumectacionAcumuladaMin = 0;
+    if (!microOk) {
+        uint32_t tEspera = millis();
+        while ((millis() - tEspera) < 2100) {
+            if (verificarPuntosDeControl()) return;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        microOk = microclimate.leer(&temp, &hum);
+        if (!microOk) {
+            temp = 0.0f;
+            hum = 0.0f;
+        }
     }
-    foliar.duracion_humeda_min = duracionHumectacionAcumuladaMin;
 
-    // 3. Estructuración del registro unificado
+    storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Datos adquiridos");
+
+    if (verificarPuntosDeControl()) return;
+
+    // 2. Estructuración del registro con marca temporal
     RegistroCompletoEstacion registro;
     timeMgr.obtenerMarcasTiempo(registro.fecha, registro.hora);
 
     registro.meteo.lluvia_mm_min        = lluvia;
     registro.meteo.velocidad_viento_ms  = vientoVel;
     strncpy(registro.meteo.direccion_viento, vientoDir, sizeof(registro.meteo.direccion_viento) - 1);
+    registro.meteo.direccion_viento[sizeof(registro.meteo.direccion_viento) - 1] = '\0';
     registro.meteo.temperatura_c        = temp;
     registro.meteo.humedad_relativa_pct = hum;
     registro.meteo.valido               = microOk;
-    registro.foliar                     = foliar;
 
-    Serial.println("\n📈 Registro consolidado:");
+#if SIGATOK_ENABLE_LEAF_WETNESS
+    uint32_t minutosCiclo = (contadorCiclos == 0) ? 1 : (SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN + 1);
+    DatosFoliares foliar = leafWetness.actualizar(minutosCiclo);
+    if (foliar.hoja_humectada) {
+        duracionHumectacionAcumuladaMin += minutosCiclo;
+    } else {
+        duracionHumectacionAcumuladaMin = 0;
+    }
+    foliar.duracion_humeda_min = duracionHumectacionAcumuladaMin;
+    registro.foliar = foliar;
+#endif
+
+    Serial.println("\n📈 Registro consolidado (CSV):");
     Serial.println(registro.aFormatoCSV());
+    Serial.printf("   [Veleta V_EMA=%.3fV | AM2305B=%s]\n",
+                  voltajeVeleta, microOk ? "OK" : "FALLO");
 
-    // 4. Guardado en MicroSD / LittleFS
+    // 3. Guardado en MicroSD (con failover transparente a LittleFS)
     if (storageMgr.guardarRegistro(registro)) {
-        Serial.println("💾 Datos guardados exitosamente en MicroSD.");
-        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Registro guardado en MicroSD");
+        Serial.println("💾 Registro guardado en almacenamiento.");
+        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Registro guardado");
     } else {
         Serial.println("❌ Error guardando registro en almacenamiento.");
-        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Fallo guardando en almacenamiento");
+        storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Error guardando en microSD");
     }
 
     contadorCiclos++;
 }
 
 void entrarEnDeepSleep() {
-    Serial.println("\n💤 Preparando sistema para Deep Sleep...");
-    storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Entrando en Deep Sleep");
+    Serial.println("\n💤 Cerrando interfaces y entrando en Deep Sleep...");
+    storageMgr.escribirLog(timeMgr.obtenerCadenaCompleta(), "Entrando en deep sleep");
 
-    // Desmontar MicroSD para proteger tabla FAT32
+    // Desmontar MicroSD para proteger integridad del sistema FAT32
     storageMgr.desmontarSD();
+    Serial.println("MicroSD desmontada con éxito.");
 
     // Apagar LED de estado
     digitalWrite(SigatokaConfig::PIN_LED_ESTADO, LOW);
@@ -214,10 +273,10 @@ void entrarEnDeepSleep() {
     // 1. Temporizador periódico (30 minutos)
     esp_sleep_enable_timer_wakeup(SigatokaConfig::TIEMPO_DEEP_SLEEP_US);
 
-    // 2. Botón de servicio físico en GPIO32 (Nivel bajo / EXT0)
+    // 2. Botón de servicio físico en GPIO 32 (nivel bajo / EXT0)
     esp_sleep_enable_ext0_wakeup(SigatokaConfig::PIN_BOTON_SERVICIO, 0);
 
-    Serial.printf("🌙 Durmiendo durante %llu minutos. Despertar por RTC o Boton GPIO32.\n", 
+    Serial.printf("🌙 Durmiendo %llu minutos. Wakeup reconfigurado (Timer + EXT0 GPIO32).\n",
                   SigatokaConfig::TIEMPO_DEEP_SLEEP_MIN);
     Serial.flush();
 

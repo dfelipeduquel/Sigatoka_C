@@ -13,7 +13,7 @@
 
 class RainGauge {
 public:
-    explicit RainGauge(gpio_num_t pin = SigatokaConfig::PIN_PLUVIOMETRO, 
+    explicit RainGauge(gpio_num_t pin = SigatokaConfig::PIN_PLUVIOMETRO,
                        float mmPorPulso = SigatokaConfig::PLUVIO_MM_POR_PULSO,
                        uint32_t debounceMs = SigatokaConfig::PLUVIO_DEBOUNCE_TIME_MS);
 
@@ -39,7 +39,7 @@ public:
     uint32_t obtenerPulsosActuales() const;
 
     /**
-     * @brief Rutina de Servicio de Interrupción (ISR) estática.
+     * @brief Rutina de Servicio de Interrupción (ISR) estática segura en IRAM.
      */
     static void IRAM_ATTR manejarInterrupcion();
 
@@ -49,7 +49,8 @@ private:
     uint32_t   _debounceMs;
 
     static volatile uint32_t _contadorPulsos;
-    static volatile uint32_t _ultimoTiempoPulsoMs;
+    static volatile uint64_t _ultimoTiempoPulsoUs;
+    static volatile uint64_t _debounceStaticUs;
     static volatile bool     _medicionActiva;
     static portMUX_TYPE      _mux;
 };

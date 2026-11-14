@@ -35,7 +35,12 @@ public:
     float finalizarYObtenerVelocidad(float duracionVentanaSegundos = 60.0f);
 
     /**
-     * @brief ISR estática de interrupción.
+     * @brief Obtiene los pulsos acumulados actualmente en la ventana.
+     */
+    uint32_t obtenerPulsosActuales() const;
+
+    /**
+     * @brief ISR estática segura en IRAM.
      */
     static void IRAM_ATTR manejarInterrupcion();
 
@@ -45,7 +50,8 @@ private:
     uint32_t   _debounceMs;
 
     static volatile uint32_t _contadorPulsos;
-    static volatile uint32_t _ultimoTiempoPulsoMs;
+    static volatile uint64_t _ultimoTiempoPulsoUs;
+    static volatile uint64_t _debounceStaticUs;
     static volatile bool     _medicionActiva;
     static portMUX_TYPE      _mux;
 };

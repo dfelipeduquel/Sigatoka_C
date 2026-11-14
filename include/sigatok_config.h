@@ -1,9 +1,12 @@
 /**
- * @file config.h
- * @brief Configuración global de hardware, pines GPIO y parámetros agrometeorológicos.
+ * @file sigatok_config.h
+ * @brief Configuración global de hardware, pines GPIO y banderas de despliegue.
  * @project SIGATOK - Estación Agrometeorológica y Monitoreo Foliar
  * @institution Universidad Tecnológica de Pereira (UTP) - Semillero Kilby
  * @author Daniel Felipe Duque Lizarralde
+ *
+ * ANCLA DE HARDWARE: Pines y constantes físicas alineadas 1:1 con el código
+ * heredado operativo en campo (legacy/micropython/main.py).
  */
 
 #ifndef SIGATOK_CONFIG_H
@@ -11,16 +14,48 @@
 
 #include <Arduino.h>
 
+// =========================================================================
+// BANDERAS DE FASE DE DESPLIEGUE (1 = Activo, 0 = Deshabilitado)
+// Fase 1: Paridad fiel 1:1 con estación offline en campo.
+// =========================================================================
+#define SIGATOK_ENABLE_LEAF_WETNESS 0
+#define SIGATOK_ENABLE_TELEGRAM     0
+#define SIGATOK_ENABLE_CAM          0
+
 namespace SigatokaConfig {
 
     // =========================================================================
-    // 1. ASIGNACIÓN DE PINES GPIO (ESP32 DevKit v1 / PCB Sigatoka)
+    // 1. ASIGNACIÓN DE PINES GPIO
+    //    - ESP32 clásico: Brújula exacta legacy/micropython/main.py (campo)
+    //    - ESP32-S3: Mapeo seguro evitando pines Flash/PSRAM (26-32) y USB (19-20)
     // =========================================================================
 
-    // Bus I2C (ADS1115 y RTC DS1307 / TinyRTC)
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    // Bus I2C (ADS1115 0x48 y TinyRTC DS1307 0x68)
+    constexpr gpio_num_t PIN_I2C_SDA        = GPIO_NUM_8;
+    constexpr gpio_num_t PIN_I2C_SCL        = GPIO_NUM_9;
+
+    // Bus SPI (MicroSD Card - FSPI/SPI2)
+    constexpr gpio_num_t PIN_SPI_SCK        = GPIO_NUM_12;
+    constexpr gpio_num_t PIN_SPI_MOSI       = GPIO_NUM_11;
+    constexpr gpio_num_t PIN_SPI_MISO       = GPIO_NUM_13;
+    constexpr gpio_num_t PIN_SPI_CS_SD      = GPIO_NUM_10;
+
+    // Sensores Meteorológicos de Pulsos (Interrupciones)
+    constexpr gpio_num_t PIN_PLUVIOMETRO    = GPIO_NUM_4;  // Interruptor Reed de balancín
+    constexpr gpio_num_t PIN_ANEMOMETRO     = GPIO_NUM_5;  // Interruptor Reed de cazoletas
+
+    // Sensores de Microclima y Estado
+    constexpr gpio_num_t PIN_AM2305B        = GPIO_NUM_6;  // Termo-higrómetro digital (protocolo DHT22)
+    constexpr gpio_num_t PIN_LED_ESTADO     = GPIO_NUM_2;  // LED indicador de ciclo activo
+
+    // Control de Interrupciones y Modo Servicio (RTC GPIO válido para EXT0)
+    constexpr gpio_num_t PIN_BOTON_SERVICIO = GPIO_NUM_1;  // Botón físico (Wakeup EXT0 nivel bajo / ISR)
+    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Reservado Fase 5: Señal despertar ESP32-CAM
+#else
+    // Bus I2C (ADS1115 0x48 y TinyRTC DS1307 0x68)
     constexpr gpio_num_t PIN_I2C_SDA        = GPIO_NUM_27;
     constexpr gpio_num_t PIN_I2C_SCL        = GPIO_NUM_26;
-    constexpr uint32_t   I2C_FREQUENCY_HZ   = 400000;      // 400 kHz Fast-Mode
 
     // Bus SPI (MicroSD Card)
     constexpr gpio_num_t PIN_SPI_SCK        = GPIO_NUM_21;
@@ -33,50 +68,55 @@ namespace SigatokaConfig {
     constexpr gpio_num_t PIN_ANEMOMETRO     = GPIO_NUM_22; // Interruptor Reed de cazoletas
 
     // Sensores de Microclima y Estado
-    constexpr gpio_num_t PIN_AM2305B        = GPIO_NUM_16; // Termo-higrómetro digital
-    constexpr gpio_num_t PIN_LED_ESTADO     = GPIO_NUM_2;  // LED onboard indicador de ciclo
+    constexpr gpio_num_t PIN_AM2305B        = GPIO_NUM_16; // Termo-higrómetro digital (protocolo DHT22)
+    constexpr gpio_num_t PIN_LED_ESTADO     = GPIO_NUM_2;  // LED onboard indicador de ciclo activo
 
     // Control de Interrupciones y Modo Servicio
-    constexpr gpio_num_t PIN_BOTON_SERVICIO = GPIO_NUM_32; // Botón físico (Wakeup EXT0 / Interrupción)
-    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Señal de activación para ESP32-CAM
+    constexpr gpio_num_t PIN_BOTON_SERVICIO = GPIO_NUM_32; // Botón físico (Wakeup EXT0 nivel bajo / ISR)
+    constexpr gpio_num_t PIN_CONTROL_CAM    = GPIO_NUM_14; // Reservado Fase 5: Señal despertar ESP32-CAM
+#endif
+
+    constexpr uint32_t   I2C_FREQUENCY_HZ   = 400000;      // 400 kHz Fast-Mode
 
     // =========================================================================
-    // 2. PARÁMETROS FÍSICOS Y FACTORES DE CALIBRACIÓN
+    // 2. PARÁMETROS FÍSICOS Y FACTORES DE CALIBRACIÓN (LEGACY CAMPO)
     // =========================================================================
 
-    // Pluviometría
-    constexpr float    PLUVIO_MM_POR_PULSO       = 0.30f;  // Cada basculación equivale a 0.3 mm de precipitación
+    // Pluviometría (Header_sensoresEstacion.py)
+    constexpr float    PLUVIO_MM_POR_PULSO       = 0.30f;  // 1 pulso = 0.3 mm de precipitación
     constexpr uint32_t PLUVIO_DEBOUNCE_TIME_MS   = 150;    // Antirrebote software para balancín (ms)
 
-    // Anemometría
-    constexpr float    ANEMO_FACTOR_VELOCIDAD    = 0.188f; // Factor empírico: v (m/s) = (pulsos/60s) * 0.188
+    // Anemometría (Header_sensoresEstacion.py)
+    constexpr float    ANEMO_FACTOR_VELOCIDAD    = 0.188f; // Factor de campo: v (m/s) = (pulsos/60s) * 0.188
     constexpr uint32_t ANEMO_DEBOUNCE_TIME_MS    = 60;     // Antirrebote software para cazoletas (ms)
     constexpr uint32_t ANEMO_SAMPLE_WINDOW_MS    = 60000;  // Ventana de integración: 60 segundos (1 minuto)
 
-    // Humectación Foliar (Sensor Clave Sigatoka)
-    constexpr uint8_t  ADS_CANAL_VELETA          = 0;      // AIN0 en ADS1115
-    constexpr uint8_t  ADS_CANAL_HUMECTACION     = 1;      // AIN1 en ADS1115
-    constexpr float    EMA_ALPHA_FOLIAR          = 0.15f;  // Coeficiente de suavizado exponencial (0.0 < alpha <= 1.0)
-    constexpr float    VOLTAJE_HOJA_SECA         = 3.30f;  // Voltaje representativo de hoja completamente seca
-    constexpr float    VOLTAJE_HOJA_SATURADA     = 1.10f;  // Voltaje representativo de lámina libre de agua
-    constexpr float    UMBRAL_HUMECTACION_ACTIVA = 70.0f;  // % mínimo de humectación para considerar espora en riesgo
+    // Conversión ADC ADS1115 (Veleta AIN0 y futuro Foliar AIN1)
+    constexpr uint8_t  ADS_CANAL_VELETA          = 0;      // AIN0 en ADS1115 (Veleta)
+    constexpr float    EMA_ALPHA_VELETA          = 0.35f;  // Suavizado EMA para estabilidad de lectura ADC
+    constexpr uint8_t  ADS_CANAL_HUMECTACION     = 1;      // AIN1 en ADS1115 (Fase 3: Humectación Foliar)
+    constexpr float    EMA_ALPHA_FOLIAR          = 0.15f;  // Coeficiente EMA foliar (Fase 3)
+    constexpr float    VOLTAJE_HOJA_SECA         = 3.30f;  // Calibración hoja seca (Fase 3)
+    constexpr float    VOLTAJE_HOJA_SATURADA     = 1.10f;  // Calibración hoja saturada (Fase 3)
+    constexpr float    UMBRAL_HUMECTACION_ACTIVA = 70.0f;  // % mínimo para riesgo Sigatoka (Fase 3)
 
     // =========================================================================
     // 3. ENERGÍA Y GESTIÓN DE CICLOS (DEEP SLEEP)
     // =========================================================================
-    constexpr uint64_t TIEMPO_DEEP_SLEEP_MIN     = 30;     // Intervalo estándar entre mediciones de campo (minutos)
+    constexpr uint64_t TIEMPO_DEEP_SLEEP_MIN     = 30;     // SLEEP_MIN = 30 en main.py legacy
     constexpr uint64_t TIEMPO_DEEP_SLEEP_US      = TIEMPO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL;
 
-    // Modo Servicio (Access Point Web)
+    // Modo Servicio (Access Point Web - Header_ModoServicio.py)
     constexpr const char* AP_SSID_SERVICIO       = "ESTACION_METEO_DATOS";
-    constexpr const char* AP_PASS_SERVICIO       = "";      // Red abierta de servicio técnico
-    constexpr uint32_t    SERVICIO_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutos de inactividad
-    constexpr uint32_t    PULSACION_SALIR_MS     = 1000;    // Pulsación larga para salir de servicio (ms)
+    constexpr const char* AP_PASS_SERVICIO       = "";      // Red abierta (authmode=0 en legacy)
+    constexpr uint32_t    SERVICIO_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutos (TIEMPO_MAX_SERVICIO_MS)
+    constexpr uint32_t    PULSACION_SALIR_MS     = 1000;    // Pulsación larga >= 1000 ms para salir
 
     // Rutas del Sistema de Archivos MicroSD y LittleFS
     constexpr const char* RUTA_CSV_SD            = "/MUNDONUEVO.csv";
     constexpr const char* RUTA_LOG_SD            = "/logs.txt";
-    constexpr const char* RUTA_BUFFER_FLASH      = "/buffer_sigatoka.json";
+    constexpr const char* RUTA_BUFFER_FLASH      = "/buffer_pendiente.csv";
+    constexpr const char* RUTA_LOG_FLASH         = "/logs_flash.txt";
 
 } // namespace SigatokaConfig
 
